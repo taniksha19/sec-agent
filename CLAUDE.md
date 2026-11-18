@@ -42,6 +42,39 @@ Production-style RAG research agent over SEC filings (10-K, 10-Q, earnings trans
 - The attack corpus (`src/security/attacks/`) is only run against this project's own agent, never third-party systems.
 - Golden-set answers (`data/golden/`) come from reading the actual filings. Model-assisted entries must be hand-checked.
 
+## Subagents
+
+Defined in `.claude/agents/`. All three are read-only reviewers/runners; they report and never edit.
+
+- **eval-runner**: after any change to retrieval, prompts, routing, or the sanitizer, and before marking a phase done.
+- **security-reviewer**: on any diff touching retrieval, agent, tools, MCP servers, gateway, or config.
+- **cost-guard**: before any Terraform/cloud command or large paid LLM run, and on diffs touching `infra/` or `src/llm_gateway/`.
+
+## Parallel work
+
+Phases still run in order; parallelism is only within a phase. Run each parallel task as its own Claude Code session in its own git worktree and branch:
+
+```
+git worktree add ../sec-agent-<task> -b <phase>-<task>
+```
+
+Rules:
+- **Agree on shared interfaces on main first** (e.g., the chunk schema and `VectorStore` signature), then branch. Parallel branches code against them, not around them.
+- **Each task owns its folders.** Don't edit another task's folders on the same phase.
+- **Shared files are edited only on main when merging:** `CLAUDE.md`, `README.md`, `docs/results.md`, `docs/decisions.md`, `docker-compose.yml`, `Makefile`. Branches note what they need added in the PR description.
+- Run **eval-runner** and **security-reviewer** on each branch before merging. Keep it to 2-3 parallel sessions; review is the bottleneck.
+
+Safe splits by phase:
+
+| Phase | Parallel tasks (folders) | Must exist on main first |
+| --- | --- | --- |
+| 1 | (a) EDGAR download + parse + chunk (`src/ingest/`); (b) docker-compose, Qdrant, `VectorStore`, embeddings (`src/retrieval/`); golden set written by hand (`data/golden/`) | Chunk schema and metadata fields |
+| 2 | (a) BM25 + fusion + reranker (`src/retrieval/`); (b) eval harness + LLM judge (`evals/`); (c) table-aware extraction (`src/ingest/`) | Golden set, baseline numbers |
+| 3 | (a) LangGraph agent + tools (`src/agent/`, `src/tools/`); (b) MCP servers (`src/mcp_servers/`); (c) Go gateway (`gateway/`); (d) second backend (`src/retrieval/`) | Tool signatures, FastAPI request/response models |
+| 4 | (a) attack corpus + sanitizer (`src/security/`); (b) Langfuse + Prometheus + Grafana (observability config) | Agent answering end to end |
+| 5 | Mostly sequential: gateway interface first, then routing policy and comparison runs | — |
+| 6 | (a) k8s manifests/Helm + HPA (`infra/k8s/`); (b) GitHub Actions CI (`.github/`); (c) load test scripts (`loadtest/`); Terraform (`infra/terraform/`) only after kind works | Stack running on kind |
+
 ## Layout
 
 ```
