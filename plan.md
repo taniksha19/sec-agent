@@ -4,7 +4,7 @@ Nov 13, 2026 · @Taniksha Dasharath Datar
 
 ## Project brief
 
-Build a production-style RAG research agent over SEC filings (10-K, 10-Q, earnings transcripts) that answers financial questions with citations, defends against prompt injection in retrieved documents, and runs on Kubernetes with measured latency, quality, and cost.
+Build a production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings releases) that answers financial questions with citations, defends against prompt injection in retrieved documents, and runs on Kubernetes with measured latency, quality, and cost.
 
 **Why this project exists:** it is a portfolio piece for AI Engineer roles. Every layer must produce a measured number that can go on a resume, and the repo must read like a real system, not a tutorial.
 
@@ -105,7 +105,7 @@ Six phases, about one week each. Do them in order; each ends with a commit, a RE
 
 ### Phase 1: Data and baseline RAG
 
-- Download 10-K and 10-Q filings and earnings transcripts for about 20 companies from EDGAR (set a User-Agent, respect rate limits).
+- Download filings for the 20 companies in `data/companies.csv` from EDGAR: last 3 10-Ks, last 4 10-Qs, and 8-K earnings releases (Exhibit 99.1) for those quarters. Set a User-Agent and respect rate limits. (Earnings-call transcripts are not on EDGAR, so 8-K releases replace them.)
 - Parse text and tables; chunk by filing section (Item 1A, Item 7, and so on) and keep metadata: company, ticker, form type, period, section, page.
 - Embed chunks and load them into the primary vector store behind a `VectorStore` interface.
 - Build a baseline: vector search, top-k, answer generation with citations to filing and section.
@@ -193,7 +193,7 @@ Write answers by reading the actual filings, not by asking a model. Spot-check a
 
 The differentiator: most RAG demos ignore the fact that retrieved text is untrusted input. This layer measures how often injected instructions inside documents hijack the agent, then shows how much a sanitizer reduces that.
 
-**Threat model.** The user is trusted. The filings and any other retrieved text are not. An attacker who can influence a document (a poisoned filing excerpt, a transcript, an uploaded file) tries to make the agent ignore its instructions, leak its system prompt or tool configuration, call tools it should not, or give a false answer.
+**Threat model.** The user is trusted. The filings and any other retrieved text are not. An attacker who can influence a document (a poisoned filing excerpt, an earnings release, an uploaded file) tries to make the agent ignore its instructions, leak its system prompt or tool configuration, call tools it should not, or give a false answer.
 
 **Attack corpus** (`src/security/attacks/`, committed as JSONL)
 

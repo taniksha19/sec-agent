@@ -4,7 +4,7 @@ Guidance for Claude Code in this repo. The full build plan is in [plan.md](plan.
 
 ## Project
 
-Production-style RAG research agent over SEC filings (10-K, 10-Q, earnings transcripts): cited answers, prompt-injection defense on retrieved text, deployed on Kubernetes with measured latency, quality, and cost. It is a portfolio piece for AI Engineer roles, so every layer must produce a measured number and the repo must read like a real system, not a tutorial.
+Production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings releases): cited answers, prompt-injection defense on retrieved text, deployed on Kubernetes with measured latency, quality, and cost. It is a portfolio piece for AI Engineer roles, so every layer must produce a measured number and the repo must read like a real system, not a tutorial.
 
 ## Current status
 
