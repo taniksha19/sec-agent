@@ -99,8 +99,10 @@ docs/             architecture.md, decisions.md, results.md
 
 Add each command here as it starts working.
 
-- `docker compose up`: start the local stack (Phase 1)
+- `make up` / `make down`: start/stop the local stack (`docker compose`). Qdrant on :6333 (REST), :6334 (gRPC)
+- `make download`: fetch filings from EDGAR into `data/raw/` (needs `SEC_USER_AGENT` in `.env`; add `--tickers AAPL` via `uv run python -m ingest.download --tickers AAPL`)
 - `make eval`: run the eval suite (Phase 1-2)
-- `make test`: unit tests
+- `make test`: unit tests (`uv run pytest`)
+- `make lint`: ruff check + format check
 - `make loadtest`: load test (Phase 6)
 - `make teardown`: destroy cloud resources (Phase 6)

@@ -1,3 +1,5 @@
+name: sec-agent  # fixed project name so the volume is always sec-agent_qdrant_data
+
 services:
   qdrant:
     image: qdrant/qdrant:v1.20.0
