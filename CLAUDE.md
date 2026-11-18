@@ -11,6 +11,10 @@ Production-style RAG research agent over SEC filings (10-K, 10-Q, earnings trans
 - **Current phase:** Phase 1 (Data and baseline RAG)
 - Update this line when a phase's acceptance criteria pass.
 
+## Out of scope
+
+- **No model fine-tuning or self-hosted serving** (no LoRA, no vLLM, no GPUs). Dropped 2026-11-18; Phase 5 is LLM routing between hosted models only. Don't reintroduce it without the user asking.
+
 ## Working rules
 
 1. **One phase at a time, in order.** Don't start a phase until the previous phase's acceptance criteria (in plan.md) pass.
@@ -24,11 +28,11 @@ Production-style RAG research agent over SEC filings (10-K, 10-Q, earnings trans
 
 ## Cost and cloud rules (strict)
 
-- Cloud is used only in Phase 5 (GPU session) and Phase 6 (final deploy).
+- Cloud is used only in Phase 6 (final deploy). Hosted LLM API calls are the only other spend.
 - **Before creating any paid resource:** state what it is, its hourly/daily cost, and the teardown plan, then wait for the user to confirm.
 - Remind the user to set a billing budget alert ($20-30) before the first paid step.
 - Tag all cloud resources `project=sec-agent`. Run `make teardown` at the end of every paid session.
-- Cache embeddings, judge outputs, and generated training data on disk so reruns don't repeat paid calls.
+- Cache embeddings and judge outputs on disk so reruns don't repeat paid calls.
 - Never commit API keys, credentials, or `.env`.
 
 ## Data and security
@@ -47,11 +51,10 @@ src/agent/        LangGraph graph and prompts
 src/tools/        calculator, table lookup, comparison
 src/mcp_servers/  MCP wrappers around tools
 src/security/     sanitizer, attack corpus
-src/llm_gateway/  model routing by cost and latency
+src/llm_gateway/  routing between cheap and strong hosted models, cost accounting, fallback
 src/api/          FastAPI app
 gateway/          Go API gateway (auth, rate limit, logging)
 evals/            eval harness, metrics, CI entrypoint, baseline.json
-finetune/         LoRA training scripts and configs
 infra/            k8s manifests / Helm, Terraform
 loadtest/         k6 or Locust scripts
 data/raw/         downloaded filings (git-ignored)
@@ -67,4 +70,4 @@ Add each command here as it starts working.
 - `make eval`: run the eval suite (Phase 1-2)
 - `make test`: unit tests
 - `make loadtest`: load test (Phase 6)
-- `make teardown`: destroy cloud resources (Phase 5-6)
+- `make teardown`: destroy cloud resources (Phase 6)

@@ -13,7 +13,7 @@ Build a production-style RAG research agent over SEC filings (10-K, 10-Q, earnin
 - Hybrid retrieval (BM25 + vectors) with a reranker, benchmarked against a vector-only baseline.
 - A LangGraph agent with tools exposed through MCP servers, behind a Go or TypeScript API gateway.
 - A prompt-injection sanitizer with before/after attack success rates.
-- A LoRA-fine-tuned small model served with vLLM, routed through an LLM gateway alongside a hosted model.
+- An LLM gateway that routes between a cheap and a strong hosted model by question difficulty, with measured cost per query vs. accuracy.
 - Langfuse tracing, Grafana dashboards, and evals that gate merges in CI.
 - Kubernetes deployment with Terraform, autoscaling, and a load test.
 
@@ -22,6 +22,7 @@ Build a production-style RAG research agent over SEC filings (10-K, 10-Q, earnin
 - No custom frontend beyond a minimal chat UI. Spend the time on the backend and infra.
 - No multi-tenant billing, user accounts beyond a simple API key, or fancy UI polish.
 - No scraping beyond SEC EDGAR.
+- No model fine-tuning or self-hosted model serving (dropped 2026-11-18 to cut GPU cost and spend the time on security, evals, and infra; see `docs/decisions.md`).
 
 **How Claude Code should work on this**
 
@@ -30,7 +31,7 @@ Build a production-style RAG research agent over SEC filings (10-K, 10-Q, earnin
 3. Prefer small, boring, readable code. No speculative abstractions, no unused config options. Add a short comment only where the reason for a choice is not obvious.
 4. Write tests for parsing, retrieval, and tool logic. Keep every eval reproducible from one command (`make eval`).
 5. Keep secrets in `.env` (git-ignored) with a committed `.env.example`. Pin dependency versions.
-6. Local first: everything must run on a laptop with `docker compose up` before any cloud step. Cloud resources are created only in Phase 6 and Phase 5's GPU session, and torn down after.
+6. Local first: everything must run on a laptop with `docker compose up` before any cloud step. Cloud resources are created only in Phase 6, and torn down after.
 7. When a decision has real tradeoffs (e.g., a chunking strategy), try the options, record the results in `docs/decisions.md`, and keep the winner. This log feeds the README's "what broke and how I fixed it" section.
 
 ## Architecture
@@ -57,8 +58,7 @@ Python handles the AI logic, Go handles the gateway, and everything runs in cont
 | Keyword search | BM25 (rank-bm25 or Postgres full-text) | Hybrid with vectors |
 | Reranker | Cross-encoder (e.g., bge-reranker) | Compare against no reranker |
 | Embeddings | Open model (e.g., bge or e5) | Same model across all backends for fair comparison |
-| Fine-tuning | HuggingFace + PEFT (LoRA) | Small model (Llama or Qwen, 7B or smaller) |
-| Serving | vLLM | Quantized small model, GPU only for benchmarks |
+| LLM routing | LLM gateway (own code or LiteLLM) | Cheap model (e.g., Groq, Gemini Flash, Haiku) vs. strong model |
 | Observability | Langfuse, Prometheus, Grafana | Tracing on every LLM call |
 | Infra | Docker Compose (local), kind (local K8s), GKE or EKS (final) | Terraform for cloud |
 | CI/CD | GitHub Actions | Lint, tests, evals gate merges |
@@ -92,7 +92,6 @@ sec-agent/
     api/                  # FastAPI app
   gateway/                # Go service
   evals/                  # eval harness, metrics, CI entrypoint
-  finetune/               # LoRA training scripts and configs
   infra/
     k8s/                  # manifests or Helm chart
     terraform/
@@ -140,14 +139,14 @@ Six phases, about one week each. Do them in order; each ends with a commit, a RE
 
 *Acceptance:* attack success rate measured with and without the sanitizer; every request visible as a Langfuse trace; the dashboard shows live metrics. This is the first demo-ready checkpoint.
 
-### Phase 5: Fine-tuning and serving
+### Phase 5: LLM gateway and model routing
 
-- Build a financial Q&A training set from the filings (generate with a strong model, then filter and spot-check by hand). Hold out a test split that never touches training.
-- LoRA fine-tune a small model (Llama or Qwen, 7B or smaller). Rent a GPU only for this session and tear it down after.
-- Serve the base and tuned models with vLLM; compare accuracy, latency, and throughput.
-- Build the LLM gateway that routes between the local tuned model and a hosted model based on cost and latency.
+- Build the LLM gateway: one interface over a cheap hosted model and a strong hosted model, with per-call token and cost accounting.
+- Add a routing policy that picks the model per question (start with simple rules such as question type and number of retrieved chunks; try a small classifier only if rules fall short).
+- Add fallback on provider errors or rate limits, and a per-request cost cap.
+- Run the golden set three ways: cheap-only, strong-only, routed. Record accuracy, p95 latency, and cost per query for each, and which question types the router sends where.
 
-*Acceptance:* before/after accuracy on the held-out set; vLLM throughput and latency recorded; routing demonstrably lowers cost per query on the golden set at similar accuracy.
+*Acceptance:* routing lowers cost per query vs. strong-only on the golden set at similar accuracy (or `docs/decisions.md` explains why not); fallback is covered by a test.
 
 ### Phase 6: Deploy and stress test
 
@@ -222,7 +221,7 @@ The tradeoff matters: report false positives (clean chunks wrongly stripped) and
 
 ## Infra, budget, and cost controls
 
-Target total spend is roughly $30-60 (under $20 if the managed-cluster step is skipped); verify current cloud and API pricing before each paid step, since rates and free tiers change.
+Target total spend is roughly $15-35 (under $10 if the managed-cluster step is skipped); verify current cloud and API pricing before each paid step, since rates and free tiers change.
 
 | Item | Free option | Paid only when |
 | --- | --- | --- |
@@ -231,17 +230,16 @@ Target total spend is roughly $30-60 (under $20 if the managed-cluster step is s
 | Observability | Self-hosted Langfuse, Prometheus, Grafana | never |
 | CI | GitHub Actions free tier | never |
 | Kubernetes | kind or minikube locally | Final GKE or EKS deploy and load test |
-| LLM calls | Groq and Gemini free tiers where limits allow | Judge runs and training-data generation at scale |
-| GPU | Colab free tier if it fits | LoRA fine-tune and vLLM benchmarks (a few hours, rented) |
+| LLM calls | Groq and Gemini free tiers where limits allow | Judge runs and strong-model routing runs at scale |
 
 **Cost controls Claude Code must follow**
 
-- Develop and test everything locally on Docker Compose and kind. Touch the cloud only in Phase 5 (GPU session) and Phase 6 (final deploy).
+- Develop and test everything locally on Docker Compose and kind. Touch the cloud only in Phase 6 (final deploy).
 - Before creating any paid resource, state what it is, the hourly or daily cost, and the planned teardown, then wait for the user to confirm.
 - Tag all cloud resources with `project=sec-agent` so they are easy to find and delete.
-- Provide a `make teardown` target (Terraform destroy plus GPU instance shutdown) and run it at the end of every paid session.
+- Provide a `make teardown` target (Terraform destroy) and run it at the end of every paid session.
 - Remind the user to set a billing budget alert (suggested $20-30) before the first paid step.
-- Cache embeddings, LLM judge outputs, and generated training data on disk so reruns do not repeat paid calls.
+- Cache embeddings and LLM judge outputs on disk so reruns do not repeat paid calls.
 - Never commit API keys, cloud credentials, or `.env` files.
 
 ## Resume metrics and README requirements
@@ -254,9 +252,8 @@ Every resume bullet will be built from a number in `docs/results.md`, so Claude 
 | 3 | Recall and p95 latency, backend A vs. backend B |  |  |
 | 4 | Attack success rate with and without sanitizer; false-positive rate |  |  |
 | 4 | Added latency from sanitizer |  |  |
-| 5 | Held-out accuracy, base vs. LoRA-tuned model |  |  |
-| 5 | vLLM throughput (tokens/s) and p95 latency |  |  |
-| 5 | Cost per query with and without model routing |  |  |
+| 5 | Cost per query: strong-only vs. routed (at matched accuracy) |  |  |
+| 5 | Answer accuracy and p95 latency: cheap-only vs. strong-only vs. routed |  |  |
 | 6 | Load test: requests/s, p50/p95 latency, pod count |  |  |
 | 6 | CI: merge blocked on a deliberate regression (yes/no, evidence) |  |  |
 
