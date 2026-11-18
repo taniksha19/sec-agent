@@ -35,3 +35,7 @@ dev = [
     "respx>=0.23.1",
     "ruff>=0.17.5",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Test fixtures embed long HTML lines verbatim.
+"tests/**" = ["E501"]
