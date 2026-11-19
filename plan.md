@@ -42,7 +42,7 @@ A request enters through the Go gateway, and the LangGraph agent then calls tool
 
 The shaded box is the security differentiator: retrieved filings are treated as untrusted input. Ingestion runs offline and writes to the vector store; observability wraps every call.
 
-**VectorStore interface.** Retrieval talks to one interface, `VectorStore`, with `upsert(chunks)`, `search(query_vector, k, filters)`, and `delete(ids)`. Qdrant or pgvector is the primary backend and Pinecone is the optional second one. Use the same embedding model and the same golden set across backends so latency, recall, and cost comparisons are fair.
+**VectorStore interface.** Retrieval talks to one interface, `VectorStore`, with `upsert(chunks)`, `search(query_vector, k, filters)`, and `delete(ids)`. Qdrant is the primary backend (local, CI, and the Phase 6 deploy). Pinecone is the second backend, added in Phase 3 for comparison. Use the same embedding model and the same golden set across backends so latency, recall, and cost comparisons are fair.
 
 ## Tech stack and repo structure
 
@@ -127,7 +127,7 @@ Six phases, about one week each. Do them in order; each ends with a commit, a RE
 - Build the LangGraph agent with tools: calculator, table lookup, and cross-company comparison.
 - Wrap the tools as MCP servers so the same tools work from other MCP clients.
 - Expose the agent through FastAPI, then put the Go (or TypeScript) gateway in front with API-key auth, rate limiting, and request logging.
-- Add a second `VectorStore` backend (Pinecone, or whichever of Qdrant/pgvector is not primary) and run the golden set on both.
+- Add Pinecone as the second `VectorStore` backend and run the golden set on both (Qdrant stays primary).
 
 *Acceptance:* multi-step questions (for example, "compare R&D spend growth for A and B over 3 years") are answered via tool calls; gateway rejects bad keys and enforces limits; both backends pass the golden set with recall and latency recorded.
 

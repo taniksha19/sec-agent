@@ -28,3 +28,8 @@ Template:
 - **How measured:** not measured yet; picked for laptop-friendliness. Revisit in Phase 2 if recall is the bottleneck.
 - **Chosen:** bge-small-en-v1.5 (384 dims) through fastembed. fastembed 0.9.1's `query_embed` does not add bge's query instruction for this model, so `Embedder.embed_query` adds it itself. Model files and document vectors are cached under `data/cache/` (on D:, git-ignored).
 - **Qdrant:** server pinned to v1.20.0 to match qdrant-client 1.20.0.
+
+## 2026-11-19: Qdrant primary, Pinecone for comparison only
+- **Chosen:** Qdrant for local dev, CI, and the Phase 6 Kubernetes deploy. Pinecone added in Phase 3 behind `VectorStore`, used only to compare recall and latency on the golden set.
+- **Why:** Qdrant is free, runs locally, keeps the deploy self-contained (one teardown), and needs no account for people who clone the repo.
+- **Optional later:** point the deployed API at Pinecone for a short load test to compare self-hosted vs. managed under load.
