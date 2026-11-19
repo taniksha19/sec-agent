@@ -4,6 +4,7 @@ from ingest.download import (
     check_user_agent,
     find_exhibit_99,
     fiscal_periods_by_accession,
+    match_release_period,
     resolve_ciks,
     rows_from_columns,
     select_filings,
@@ -114,3 +115,19 @@ def test_check_user_agent_rejects_placeholders(value):
 
 def test_check_user_agent_accepts_real_contact():
     assert check_user_agent("sec-agent me@school.edu") == "sec-agent me@school.edu"
+
+
+def test_match_release_period_picks_latest_quarter_before_release():
+    rows = [
+        row("10-K", "2025-10-31", "2025-09-27", acc="K"),
+        row("10-Q", "2025-08-01", "2025-06-28", acc="Q3"),
+        row("8-K", "2025-10-30", items="2.02"),
+    ]
+    assert match_release_period("2025-10-30", rows)["accessionNumber"] == "K"
+    assert match_release_period("2025-07-31", rows)["accessionNumber"] == "Q3"
+
+
+def test_match_release_period_returns_none_when_too_far():
+    rows = [row("10-Q", "2025-08-01", "2025-06-28")]
+    assert match_release_period("2025-12-01", rows) is None
+    assert match_release_period("2025-06-28", rows) is None  # same day: not after quarter end

@@ -39,6 +39,8 @@ N_10Q = 4
 # SEC allows 10 requests/second; stay well under it.
 MIN_REQUEST_INTERVAL_S = 0.15
 MAX_RETRIES = 5
+# Large companies must file within 40-60 days of quarter end; releases come before that.
+RELEASE_MAX_LAG_DAYS = 60
 
 
 class EdgarClient:
@@ -172,6 +174,27 @@ def find_exhibit_99(index_html: str) -> str | None:
     return candidates[0][1] if candidates else None
 
 
+def match_release_period(release_date: str, rows: list[dict]) -> dict | None:
+    """Find the 10-K/10-Q whose quarter an earnings release (8-K) reports on.
+
+    Releases come out a few weeks after quarter end, so pick the latest period that ended
+    before the release, within RELEASE_MAX_LAG_DAYS. Returns None if nothing fits (for example,
+    the release is newer than any 10-Q on EDGAR) rather than guessing.
+    """
+    release = date.fromisoformat(release_date)
+    best: dict | None = None
+    for r in rows:
+        if r["form"] not in ("10-K", "10-Q") or not r.get("reportDate"):
+            continue
+        period_end = date.fromisoformat(r["reportDate"])
+        lag = (release - period_end).days
+        if 0 < lag <= RELEASE_MAX_LAG_DAYS and (
+            best is None or period_end > date.fromisoformat(best["reportDate"])
+        ):
+            best = r
+    return best
+
+
 def download_company(client: EdgarClient, info: dict, cik: str) -> list[Filing]:
     ticker = info["ticker"]
     out_dir = RAW_DIR / ticker
@@ -213,6 +236,15 @@ def download_company(client: EdgarClient, info: dict, cik: str) -> list[Filing]:
             log.info("%s %s %s downloaded", ticker, row["form"], period)
 
         fy, fp = fiscal.get(acc, (None, None))
+        if row["form"] == "8-K":
+            # The 8-K's own reportDate is the release date; label it with the quarter it covers.
+            matched = match_release_period(row["filingDate"], rows)
+            period = matched["reportDate"] if matched else None
+            fy, fp = (
+                fiscal.get(matched["accessionNumber"], (None, None)) if matched else (None, None)
+            )
+            if fp == "FY":
+                fp = "Q4"  # a release matched to a 10-K covers the fourth quarter
         filings.append(
             Filing(
                 ticker=ticker,
