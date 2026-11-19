@@ -17,6 +17,9 @@ class Company(BaseModel):
     name: str
     sector: str
     cik: str = Field(description="10-digit zero-padded CIK, from EDGAR")
+    prior_ciks: list[str] = Field(
+        default_factory=list, description="Earlier CIKs after a reorganization (e.g. XOM)"
+    )
     fiscal_year_end: str | None = Field(
         default=None, description="MMDD as reported by EDGAR, e.g. '0928' for Apple"
     )

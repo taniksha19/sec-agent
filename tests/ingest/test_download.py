@@ -5,6 +5,7 @@ from ingest.download import (
     find_exhibit_99,
     fiscal_periods_by_accession,
     match_release_period,
+    merge_rows,
     resolve_ciks,
     rows_from_columns,
     select_filings,
@@ -131,3 +132,25 @@ def test_match_release_period_returns_none_when_too_far():
     rows = [row("10-Q", "2025-08-01", "2025-06-28")]
     assert match_release_period("2025-12-01", rows) is None
     assert match_release_period("2025-06-28", rows) is None  # same day: not after quarter end
+
+
+def test_merge_rows_orders_across_ciks_newest_first():
+    new = [dict(row("10-Q", "2026-08-03", "2026-06-30"), cik="NEW")]
+    old = [
+        dict(row("10-K", "2026-02-18", "2025-12-31"), cik="OLD"),
+        dict(row("10-Q", "2026-05-04", "2026-03-31"), cik="OLD"),
+    ]
+    merged = merge_rows([new, old])
+    assert [(r["form"], r["cik"]) for r in merged] == [
+        ("10-Q", "NEW"),
+        ("10-Q", "OLD"),
+        ("10-K", "OLD"),
+    ]
+
+
+def test_merge_rows_drops_report_listed_under_both_ciks():
+    new = [dict(row("10-Q", "2026-08-03", "2026-06-30", acc="A"), cik="NEW")]
+    old = [dict(row("10-Q", "2026-08-03", "2026-06-30", acc="B"), cik="OLD")]
+    same_acc = [dict(row("10-Q", "2026-08-03", "2026-06-30", acc="A"), cik="OLD")]
+    assert [r["cik"] for r in merge_rows([new, old])] == ["NEW"]
+    assert [r["cik"] for r in merge_rows([new, same_acc])] == ["NEW"]

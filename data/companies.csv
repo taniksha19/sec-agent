@@ -1,21 +1,21 @@
-ticker,name,sector,why
-NVDA,NVIDIA,Semiconductors,Peer group for growth and R&D comparisons; fiscal year ends in January
-AMD,Advanced Micro Devices,Semiconductors,Direct NVDA/INTC peer
-INTC,Intel,Semiconductors,Declining-margin contrast to NVDA/AMD; restructuring disclosures
-AAPL,Apple,Big tech,Fiscal year ends in September; segment and geography tables
-MSFT,Microsoft,Big tech,Fiscal year ends in June; cloud segment reporting
-GOOGL,Alphabet,Big tech,Two share classes; segment reporting; regulatory risk factors
-WMT,Walmart,Retail,Fiscal year ends in January; Retail peer group
-COST,Costco,Retail,Membership-fee revenue line; non-calendar fiscal year
-TGT,Target,Retail,Third retail peer for margin comparisons
-JPM,JPMorgan Chase,Banking,Bank financial statements (net interest income, no COGS) test table parsing
-BAC,Bank of America,Banking,Bank peer for JPM comparisons
-PFE,Pfizer,Pharma,Post-COVID revenue drop; R&D-heavy; litigation risk factors
-MRK,Merck,Pharma,Pharma peer; drug concentration risk
-XOM,ExxonMobil,Energy,Commodity-driven results; Energy peer group
-CVX,Chevron,Energy,Energy peer for XOM comparisons
-KO,Coca-Cola,Consumer staples,Currency and pricing disclosures
-PEP,PepsiCo,Consumer staples,KO peer; mixed snacks and beverages segments
-TSLA,Tesla,Autos,Auto peer with very different margins and risk factors
-F,Ford,Autos,Legacy automaker vs. TSLA; captive finance segment
-BA,Boeing,Industrials,Long narrative risk sections (safety, supply chain); losses and negative equity edge cases
+ticker,name,sector,prior_cik,why
+NVDA,NVIDIA,Semiconductors,,Peer group for growth and R&D comparisons; fiscal year ends in January
+AMD,Advanced Micro Devices,Semiconductors,,Direct NVDA/INTC peer
+INTC,Intel,Semiconductors,,Declining-margin contrast to NVDA/AMD; restructuring disclosures
+AAPL,Apple,Big tech,,Fiscal year ends in September; segment and geography tables
+MSFT,Microsoft,Big tech,,Fiscal year ends in June; cloud segment reporting
+GOOGL,Alphabet,Big tech,,Two share classes; segment reporting; regulatory risk factors
+WMT,Walmart,Retail,,Fiscal year ends in January; Retail peer group
+COST,Costco,Retail,,Membership-fee revenue line; non-calendar fiscal year
+TGT,Target,Retail,,Third retail peer for margin comparisons
+JPM,JPMorgan Chase,Banking,,"Bank financial statements (net interest income, no COGS) test table parsing"
+BAC,Bank of America,Banking,,Bank peer for JPM comparisons
+PFE,Pfizer,Pharma,,Post-COVID revenue drop; R&D-heavy; litigation risk factors
+MRK,Merck,Pharma,,Pharma peer; drug concentration risk
+XOM,ExxonMobil,Energy,0000034088,"Commodity-driven results; Energy peer group; reorganized into ExxonMobil Holdings (new CIK) on 2026-07-01, history under prior_cik"
+CVX,Chevron,Energy,,Energy peer for XOM comparisons
+KO,Coca-Cola,Consumer staples,,Currency and pricing disclosures
+PEP,PepsiCo,Consumer staples,,KO peer; mixed snacks and beverages segments
+TSLA,Tesla,Autos,,Auto peer with very different margins and risk factors
+F,Ford,Autos,,Legacy automaker vs. TSLA; captive finance segment
+BA,Boeing,Industrials,,"Long narrative risk sections (safety, supply chain); losses and negative equity edge cases"

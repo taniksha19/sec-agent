@@ -133,7 +133,32 @@ def fetch_filing_rows(client: EdgarClient, cik: str) -> tuple[dict, list[dict]]:
         if sum(r["form"] == "10-K" for r in rows) >= N_10K:
             break
         rows += rows_from_columns(client.get_json(SUBMISSIONS_URL.format(name=older["name"])))
+    for r in rows:
+        r["cik"] = cik  # archive URLs need the CIK that actually filed the document
     return sub, rows
+
+
+def merge_rows(row_lists: list[list[dict]]) -> list[dict]:
+    """Combine filings from a company's current and prior CIKs, newest first.
+
+    Around a reorganization the same report can be listed under both CIKs, so duplicates are
+    dropped by accession number and, for 10-K/10-Q, by (form, period). row_lists[0] is the
+    current CIK and wins ties (sorted() is stable).
+    """
+    rows = sorted(
+        (r for rows in row_lists for r in rows), key=lambda r: r["filingDate"], reverse=True
+    )
+    seen: set = set()
+    unique = []
+    for r in rows:
+        keys = {r["accessionNumber"]}
+        if r["form"] in ("10-K", "10-Q") and r.get("reportDate"):
+            keys.add((r["form"], r["reportDate"]))
+        if keys & seen:
+            continue
+        seen |= keys
+        unique.append(r)
+    return unique
 
 
 def fiscal_periods_by_accession(company_facts: dict) -> dict[str, tuple[int, str]]:
@@ -200,23 +225,31 @@ def download_company(client: EdgarClient, info: dict, cik: str) -> list[Filing]:
     out_dir = RAW_DIR / ticker
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # A company that reorganized (e.g. XOM into a holding company in 2026) gets a new CIK;
+    # its history stays under the prior one, listed in companies.csv.
+    prior_ciks = [f"{int(c):010d}" for c in info.get("prior_cik", "").split(";") if c.strip()]
     sub, rows = fetch_filing_rows(client, cik)
+    row_lists = [rows] + [fetch_filing_rows(client, c)[1] for c in prior_ciks]
+    rows = merge_rows(row_lists)
     company = Company(
         ticker=ticker,
         name=info["name"],
         sector=info["sector"],
         cik=cik,
+        prior_ciks=prior_ciks,
         fiscal_year_end=sub.get("fiscalYearEnd"),
     )
     (out_dir / "company.json").write_text(company.model_dump_json(indent=2), encoding="utf-8")
 
-    fiscal = fiscal_periods_by_accession(client.get_json(COMPANY_FACTS_URL.format(cik=cik)))
+    fiscal: dict[str, tuple[int, str]] = {}
+    for c in [cik, *prior_ciks]:
+        fiscal |= fiscal_periods_by_accession(client.get_json(COMPANY_FACTS_URL.format(cik=c)))
 
     filings: list[Filing] = []
     for row in select_filings(rows):
         acc = row["accessionNumber"]
         acc_nodash = acc.replace("-", "")
-        base = dict(cik_int=int(cik), acc_nodash=acc_nodash)
+        base = dict(cik_int=int(row["cik"]), acc_nodash=acc_nodash)
 
         if row["form"] == "8-K":
             index_url = ARCHIVE_URL.format(**base, name=f"{acc}-index.htm")
@@ -248,7 +281,7 @@ def download_company(client: EdgarClient, info: dict, cik: str) -> list[Filing]:
         filings.append(
             Filing(
                 ticker=ticker,
-                cik=cik,
+                cik=row["cik"],
                 form_type=row["form"],
                 accession_number=acc,
                 filing_date=date.fromisoformat(row["filingDate"]),
