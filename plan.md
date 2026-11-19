@@ -54,7 +54,7 @@ Python handles the AI logic, Go handles the gateway, and everything runs in cont
 | API (core) | FastAPI + Pydantic | Typed request/response models |
 | Gateway | Go (or TypeScript) | Auth, rate limiting, request logging, routing |
 | Agent | LangGraph | Tools exposed via MCP servers |
-| Vector store | Qdrant or pgvector (primary), Pinecone (optional second backend) | Behind one `VectorStore` interface |
+| Vector store | Qdrant (primary), Pinecone (second backend, Phase 3) | Behind one `VectorStore` interface |
 | Keyword search | BM25 (rank-bm25 or Postgres full-text) | Hybrid with vectors |
 | Reranker | Cross-encoder (e.g., bge-reranker) | Compare against no reranker |
 | Embeddings | Open model (e.g., bge or e5) | Same model across all backends for fair comparison |
@@ -226,7 +226,7 @@ Target total spend is roughly $15-35 (under $10 if the managed-cluster step is s
 | Item | Free option | Paid only when |
 | --- | --- | --- |
 | Data | SEC EDGAR | never |
-| Vector DB | Qdrant or pgvector in Docker | Pinecone backend test (check free tier first) |
+| Vector DB | Qdrant in Docker | Pinecone backend test (check free tier first) |
 | Observability | Self-hosted Langfuse, Prometheus, Grafana | never |
 | CI | GitHub Actions free tier | never |
 | Kubernetes | kind or minikube locally | Final GKE or EKS deploy and load test |
