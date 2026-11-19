@@ -82,3 +82,31 @@ def test_pack_respects_limit_and_overlaps():
     assert all(count_tokens(text) <= CHUNK_TOKENS for text, _ in chunks)
     # the last sentence of one chunk starts the next
     assert chunks[1][0].startswith(sentence)
+
+
+def test_split_sections_10q_item_title_decides_part():
+    # BofA-style: "Part II" appears just before MD&A, and Part II has its own Item 2.
+    bs = blocks(
+        "Part I. Financial Information",
+        "Part II. Other Information",
+        "Item 2. Management's Discussion and Analysis",
+        "MD&A text " * 30,
+        "Item 2. Unregistered Sales of Equity Securities",
+        "text",
+    )
+    ids = [s for s, _, _ in split_sections(bs, "10-Q")]
+    assert "part_i_item_2" in ids and "part_ii_item_2" in ids
+
+
+def test_split_sections_replaces_stub_item_with_title():
+    # JPMorgan-style: "Item 7." is a one-line pointer; real MD&A comes later under its title.
+    bs = blocks(
+        "Item 7. Management's Discussion and Analysis",
+        "See pages 50-150.",
+        "Item 8. Financial Statements",
+        "See pages 150-300.",
+        "Management's discussion and analysis",
+        "Real MD&A " * 40,
+    )
+    sections = {s: b for s, _, b in split_sections(bs, "10-K")}
+    assert sections["item_7"][0].text.startswith("Real MD&A")

@@ -175,6 +175,65 @@ def heading_key(text: str, part: str | None, form_type: str) -> tuple[str, str] 
     return f"item_{item}", title
 
 
+# Some large filers (Intel, BofA, JPMorgan) use plain titles instead of "Item N." headings, or
+# keep the Item heading as a one-line stub pointing elsewhere. Used only when the Item heading
+# is missing or a stub.
+_MDA = r"management'?s discussion and analysis( of financial condition and results of operations)?"
+FALLBACK_TITLES: dict[str, dict[str, tuple[str, str]]] = {
+    "10-K": {
+        "item_1a": ("Risk Factors", r"risk factors"),
+        "item_7": ("Management's Discussion and Analysis", _MDA),
+        "item_8": (
+            "Financial Statements and Supplementary Data",
+            r"(consolidated )?financial statements( and supplement(ary|al) (data|details))?"
+            r"|consolidated statements? of (income|operations|earnings)"
+            r"|reports? of independent registered public accounting firm",
+        ),
+    },
+    "10-Q": {
+        "part_i_item_1": (
+            "Financial Statements",
+            r"(consolidated )?(condensed )?financial statements( \(unaudited\))?"
+            r"|consolidated (condensed )?statements? of (income|operations|earnings)"
+            r"( \(unaudited\))?",
+        ),
+        "part_i_item_2": ("Management's Discussion and Analysis", _MDA),
+    },
+}
+
+
+PART_I_TITLES = re.compile(
+    r"financial statements|discussion and analysis|quantitative and qualitative|controls and proc",
+    re.IGNORECASE,
+)
+PART_II_TITLES = re.compile(
+    r"legal proceedings|risk factors|unregistered sales|defaults upon|mine safety"
+    r"|other information|exhibits",
+    re.IGNORECASE,
+)
+
+# An Item section shorter than this is a cross-reference stub ("see pages 50-120").
+STUB_CHARS = 1500
+
+
+def find_title(blocks: list[Block], pattern: str, start: int = 0) -> int | None:
+    """Index of the first block that is exactly this title AND is followed by content.
+
+    Whole-line match skips running page headers like 'Risk Factors 37'. Requiring a paragraph
+    or table within the next 3 blocks skips table-of-contents lines, which are followed by more
+    short lines.
+    """
+    regex = re.compile(rf"^(?:{pattern})$", re.IGNORECASE)
+    for i, block in enumerate(blocks[start:], start):
+        text = block.text.replace("’", "'").rstrip(".:").strip()
+        if block.kind != "text" or not regex.match(text):
+            continue
+        following = blocks[i + 1 : i + 4]
+        if any(b.kind == "table" or len(b.text) > 200 for b in following):
+            return i
+    return None
+
+
 def split_sections(blocks: list[Block], form_type: str) -> list[tuple[str, str, list[Block]]]:
     """Group blocks into (section_id, title, blocks).
 
@@ -186,18 +245,46 @@ def split_sections(blocks: list[Block], form_type: str) -> list[tuple[str, str, 
 
     candidates: dict[str, tuple[int, str]] = {}
     part = None
+    last_item = 0
     for i, block in enumerate(blocks):
         if block.kind != "text":
             continue
         if len(block.text) <= MAX_HEADING_CHARS and (pm := PART_RE.match(block.text)):
             part = pm.group(1)
+            last_item = 0
             continue
+        if len(block.text) <= MAX_HEADING_CHARS and (m := ITEM_RE.match(block.text)):
+            number = int(re.match(r"\d+", m.group(1)).group())
+            # Item numbers restarting inside Part I means Part II began without a heading.
+            if form_type == "10-Q" and part and part.upper() == "I" and number <= last_item:
+                part = "II"
+            # A 10-Q item's title fixes its part, even when Part headings are missing or
+            # misplaced (BofA lists "Part I" and "Part II" right before its MD&A).
+            if form_type == "10-Q":
+                if PART_I_TITLES.search(m.group(2)):
+                    part = "I"
+                elif PART_II_TITLES.search(m.group(2)):
+                    part = "II"
+            last_item = number
         key = heading_key(block.text, part, form_type)
         if key:
             section_id, title = key
             if not title and i + 1 < len(blocks) and len(blocks[i + 1].text) <= MAX_HEADING_CHARS:
                 title = blocks[i + 1].text  # title on its own line after "Item 7."
             candidates[section_id] = (i, title)
+
+    fallbacks = FALLBACK_TITLES.get(form_type, {})
+    starts = sorted(i for i, _ in candidates.values())
+    for section_id, (title, pattern) in fallbacks.items():
+        if section_id not in candidates:
+            if (i := find_title(blocks, pattern)) is not None:
+                candidates[section_id] = (i, title)
+            continue
+        i, item_title = candidates[section_id]
+        end = next((s for s in starts if s > i), len(blocks))
+        if sum(len(b.text) for b in blocks[i + 1 : end]) < STUB_CHARS:
+            if (t := find_title(blocks, pattern, start=end)) is not None:
+                candidates[section_id] = (t, item_title or title)
 
     starts = sorted((i, sid, title) for sid, (i, title) in candidates.items())
     sections = []
