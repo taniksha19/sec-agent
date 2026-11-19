@@ -33,3 +33,9 @@ Template:
 - **Chosen:** Qdrant for local dev, CI, and the Phase 6 Kubernetes deploy. Pinecone added in Phase 3 behind `VectorStore`, used only to compare recall and latency on the golden set.
 - **Why:** Qdrant is free, runs locally, keeps the deploy self-contained (one teardown), and needs no account for people who clone the repo.
 - **Optional later:** point the deployed API at Pinecone for a short load test to compare self-hosted vs. managed under load.
+
+## 2026-11-19: Section parsing for non-standard filing layouts
+- **Problem:** Several large filers don't use clean "Item N." headings. Intel uses plain titles; BofA's 10-Q lists "Part I/Part II" right before MD&A; JPMorgan's 10-K "Item 7/8" are one-line stubs pointing to an annual-report section after Item 15; Exxon's history spans two CIKs.
+- **Tried:** (1) Item headings only, keeping each heading's last occurrence to skip the table of contents: 3 companies broken. (2) Added a whole-line title fallback, stub detection (<1500 chars, then use the title found later), and title-based Part I/II for 10-Q items: Intel, BofA, JPM 10-Ks fixed.
+- **Measured:** `python -m ingest.check_sections` flags 23 of 140 10-K/10-Q filings (117 look clean). Flagged: MSFT (7), F (6), JPM 10-Q MD&A (4), CVX Item 7 (3), PEP Item 8 (3). Flags are suspicions, not each confirmed. All text is still chunked; only section labels are affected. 8-Ks are unaffected.
+- **Chosen:** accept for Phase 1. Avoid flagged sections when writing golden questions. Revisit in Phase 2 alongside table-aware extraction (option: compare against an open-source parser such as edgartools).
