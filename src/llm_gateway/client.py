@@ -40,6 +40,9 @@ class LLMClient:
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
             temperature=0,  # reproducible answers for evals
             max_tokens=max_tokens,
+            # Nemotron 3.5 thinks by default, which spent a whole 1500-token budget on one RAG
+            # answer with nothing left for the reply. Answers were as good without it.
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         text = THINK_RE.sub("", resp.choices[0].message.content or "").strip()
         usage = resp.usage
