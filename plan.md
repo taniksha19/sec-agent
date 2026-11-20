@@ -205,7 +205,7 @@ The differentiator: most RAG demos ignore the fact that retrieved text is untrus
 
 1. **Baseline:** no defense.
 2. **Prompt hardening:** clear separation of instructions and retrieved content, with the retrieved text explicitly marked as data.
-3. **Sanitizer:** a classifier or small model that flags and strips instruction-like content from chunks before they reach the agent. This can reuse ideas from the sanitizer-model work in the Agentic AI course project.
+3. **Sanitizer:** flags and strips instruction-like content from chunks before they reach the agent. Compare (a) rules, (b) an off-the-shelf open injection classifier run on CPU (check current models before starting), and optionally (c) the sanitizer model from the Agentic AI course project, if it is ready by Phase 4.
 4. **Tool guardrails:** allow-list tool arguments and require that tool calls trace back to the user's request, not retrieved text.
 
 **Measurement**
