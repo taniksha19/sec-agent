@@ -39,3 +39,7 @@ Template:
 - **Tried:** (1) Item headings only, keeping each heading's last occurrence to skip the table of contents: 3 companies broken. (2) Added a whole-line title fallback, stub detection (<1500 chars, then use the title found later), and title-based Part I/II for 10-Q items: Intel, BofA, JPM 10-Ks fixed.
 - **Measured:** `python -m ingest.check_sections` flags 23 of 140 10-K/10-Q filings (117 look clean). Flagged: MSFT (7), F (6), JPM 10-Q MD&A (4), CVX Item 7 (3), PEP Item 8 (3). Flags are suspicions, not each confirmed. All text is still chunked; only section labels are affected. 8-Ks are unaffected.
 - **Chosen:** accept for Phase 1. Avoid flagged sections when writing golden questions. Revisit in Phase 2 alongside table-aware extraction (option: compare against an open-source parser such as edgartools).
+
+## 2026-11-20: Embedding throughput on CPU
+- **Measured:** embedding and loading all 47,768 chunks took 362 min (~2.2 chunks/s) with bge-small via fastembed on a Ryzen 5 5500U laptop CPU. A local Qwen benchmark ran concurrently for part of it, so this is a pessimistic number.
+- **Impact:** vectors are cached on disk (`data/cache/embeddings/`), so re-indexing unchanged chunks is fast. But any chunking change in Phase 2 re-embeds everything. Run chunk-size experiments on a subset of companies first, and only re-embed the full corpus for the winner.
