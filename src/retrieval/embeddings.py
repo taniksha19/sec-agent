@@ -43,7 +43,9 @@ class Embedder:
 
         missing = [i for i, v in enumerate(vectors) if v is None]
         if missing:
-            new = self.model.embed([texts[i] for i in missing])
+            # Small batches pad less (each batch pads to its longest text): measured
+            # 8.0 chunks/s at 32 vs 7.0 at fastembed's default 256 on a laptop CPU.
+            new = self.model.embed([texts[i] for i in missing], batch_size=32)
             for i, vector in zip(missing, new, strict=True):
                 paths[i].parent.mkdir(parents=True, exist_ok=True)
                 np.save(paths[i], vector.astype(np.float32))
