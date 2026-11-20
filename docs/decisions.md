@@ -43,3 +43,9 @@ Template:
 ## 2026-11-20: Embedding throughput on CPU
 - **Measured:** embedding and loading all 47,768 chunks took 362 min (~2.2 chunks/s) with bge-small via fastembed on a Ryzen 5 5500U laptop CPU. A local Qwen benchmark ran concurrently for part of it, so this is a pessimistic number.
 - **Impact:** vectors are cached on disk (`data/cache/embeddings/`), so re-indexing unchanged chunks is fast. But any chunking change in Phase 2 re-embeds everything. Run chunk-size experiments on a subset of companies first, and only re-embed the full corpus for the winner.
+
+## 2026-11-20: Answer LLM for the baseline
+- **Options tested:** NVIDIA-hosted Nemotron 3.5 Lightning (30B-A3B), Nemotron 3.5 Super (120B-A12B), Nemotron 3 Ultra (550B-A55B), on the same top-5 RAG prompts. Local Qwen 3.5 4B (Ollama) was ruled out earlier at ~140 s per answer on CPU.
+- **Measured (spot check, 2 questions, not an eval):** Lightning ~1 s but invented an NVIDIA R&D figure ("$10.8 billion") that was in none of the 5 sources. Super ~2 s and correctly refused. Ultra ~25 s per answer.
+- **Thinking:** Nemotron 3.5 thinks by default; on one RAG prompt it used the whole 1500-token budget with no reply left. Turned off via `chat_template_kwargs.enable_thinking=false`.
+- **Chosen:** Super, thinking off. Lightning is the cheap-model candidate for Phase 5 routing.
