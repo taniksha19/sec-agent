@@ -8,6 +8,7 @@ dependencies = [
     "httpx>=0.28.1",
     "lxml>=6.1.3",
     "numpy>=2.5.5",
+    "openai>=3.57.0",
     "pydantic>=2.14.3",
     "python-dotenv>=1.2.4",
     "qdrant-client>=1.20.0",
@@ -20,7 +21,7 @@ build-backend = "hatchling.build"
 # Each top-level folder under src/ is its own package (matches plan.md layout).
 # Add new packages here as they are created.
 [tool.hatch.build.targets.wheel]
-packages = ["src/ingest", "src/retrieval"]
+packages = ["src/ingest", "src/retrieval", "src/agent", "src/llm_gateway"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
