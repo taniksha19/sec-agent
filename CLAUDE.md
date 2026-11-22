@@ -101,7 +101,7 @@ Add each command here as it starts working.
 
 - `make up` / `make down`: start/stop the local stack (`docker compose`). Qdrant on :6333 (REST), :6334 (gRPC)
 - `make download`: fetch filings from EDGAR into `data/raw/` (needs `SEC_USER_AGENT` in `.env`; add `--tickers AAPL` via `uv run python -m ingest.download --tickers AAPL`)
-- `make eval`: golden set through the baseline: recall@1/5/10 and judged accuracy. Needs Qdrant up, `LLM_*` and `GEMINI_API_KEY` in `.env`. LLM replies cached in `data/cache/llm/`. `--save-baseline` writes `evals/baseline.json`; `--limit N` for a quick run
+- `make eval`: golden set through vector, hybrid and hybrid+NVIDIA rerank (`--all`), one table of recall@1/5/10, judged accuracy, faithfulness, refusals. Needs Qdrant up, `LLM_*`, `NVIDIA_API_KEY` and `GEMINI_API_KEY` in `.env`. LLM replies and rerank scores cached in `data/cache/`. Single setup: `uv run python -m evals.run --retrieval hybrid --rerank nvidia`; `--recall-only` skips all LLM calls; `--save-baseline` writes `evals/baseline.json`; `--limit N` for a quick run
 - `uv run python -m agent.baseline "question"`: one cited answer from the CLI
 - `make test`: unit tests (`uv run pytest`)
 - `make lint`: ruff check + format check

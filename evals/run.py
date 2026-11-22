@@ -181,7 +181,18 @@ def summarize(rows: list[dict]) -> dict:
     }
 
 
-def recall_only(rag, golden: list[dict], args) -> None:
+ALL_CONFIGS = [("vector", None), ("hybrid", None), ("hybrid", "nvidia")]
+
+
+def write_run(prefix: str, retrieval: str, summary: dict, rows: list[dict]) -> Path:
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    out = RESULTS_DIR / f"{prefix}-{stamp}-{retrieval}.json"
+    out.write_text(json.dumps({"summary": summary, "rows": rows}, indent=2), encoding="utf-8")
+    return out
+
+
+def recall_only(rag, golden: list[dict], args) -> dict:
     """Retrieval metrics without any LLM call: free, fast, and unaffected by judge quotas.
     For chunking and retrieval experiments; accuracy still needs the full run."""
     rows = []
@@ -200,51 +211,15 @@ def recall_only(rag, golden: list[dict], args) -> None:
         "collection": args.collection,
         "tickers": args.tickers,
     }
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    out = RESULTS_DIR / f"recall-{stamp}-{rag.retrieval}.json"
-    out.write_text(json.dumps({"summary": summary, "rows": rows}, indent=2), encoding="utf-8")
+    out = write_run("recall", rag.retrieval, summary, rows)
     print(json.dumps(summary))
+    print(f"Details: {out}")
+    return summary
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--retrieval", choices=["vector", "hybrid"], default="hybrid")
-    parser.add_argument("--rerank", choices=[*sorted(MODELS), "none"], default="nvidia")
-    parser.add_argument("--candidates", type=int, default=CANDIDATES, help="Chunks to rerank")
-    parser.add_argument("--collection", default=COLLECTION, help="Qdrant collection to search")
-    parser.add_argument("--tickers", nargs="*", help="Only questions whose sources are all these")
-    parser.add_argument("--limit", type=int, help="Only run the first N questions")
-    parser.add_argument("--save-baseline", action="store_true", help="Write evals/baseline.json")
-    parser.add_argument(
-        "--recall-only",
-        action="store_true",
-        help="Retrieval metrics only: no answer or judge calls",
-    )
-    args = parser.parse_args()
-    load_dotenv()
-
-    rag = from_env(args.retrieval, None if args.rerank == "none" else args.rerank, args.collection)
-    rag.candidates = args.candidates
-    rag.llm = CachedLLM(rag.llm, CACHE_DIR)
-    judge_llm = CachedLLM(
-        # Free tier allows ~15 requests/min; a burst of 20 got 429s even with SDK retries.
-        LLMClient(JUDGE_BASE_URL, os.environ["GEMINI_API_KEY"], JUDGE_MODEL, min_interval=4.5),
-        CACHE_DIR,
-    )
-
-    golden = load_golden()
-    if args.tickers:
-        keep = {t.upper() for t in args.tickers}
-        golden = [
-            q for q in golden if q["sources"] and {s["company"] for s in q["sources"]} <= keep
-        ]
-    golden = golden[: args.limit]
+def full_run(rag, judge_llm, golden: list[dict], args) -> dict:
     rows = []
     start = time.monotonic()
-    if args.recall_only:
-        recall_only(rag, golden, args)
-        return
     for i, q in enumerate(golden, 1):
         results = rag.retrieve(q["question"], max(KS))
         chunks = [r.chunk for r in results]
@@ -276,7 +251,7 @@ def main() -> None:
             }
         )
         print(
-            f"[{i}/{len(golden)}] {q['id']}: {'OK ' if correct else 'BAD'} "
+            f"[{rag.retrieval} {i}/{len(golden)}] {q['id']}: {'OK ' if correct else 'BAD'} "
             f"recall@5={recall['5'] if recall else '-'}"
         )
 
@@ -295,16 +270,85 @@ def main() -> None:
             "wall_seconds": round(time.monotonic() - start),
         }
     )
-
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    out = RESULTS_DIR / f"run-{stamp}-{rag.retrieval}.json"
-    out.write_text(json.dumps({"summary": summary, "rows": rows}, indent=2), encoding="utf-8")
-    if args.save_baseline:
-        BASELINE.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-
+    out = write_run("run", rag.retrieval, summary, rows)
     print(json.dumps(summary, indent=2))
     print(f"Details: {out}")
+    return summary
+
+
+def format_table(summaries: list[dict]) -> str:
+    """One row per retrieval setup; cells a run didn't measure (recall-only) stay blank."""
+    cols = ["R@1", "R@5", "R@10", "accuracy", "faithfulness", "refused_answerable"]
+
+    def cell(v):
+        return "" if v is None else f"{v:.3f}"
+
+    lines = [
+        "| retrieval | " + " | ".join(cols) + " |",
+        "| --- |" + " --- |" * len(cols),
+    ]
+    for s in summaries:
+        values = [s["recall"]["@1"], s["recall"]["@5"], s["recall"]["@10"]]
+        values += [s.get(c) for c in ("accuracy", "faithfulness", "refused_answerable")]
+        lines.append(f"| {s['retrieval']} | " + " | ".join(cell(v) for v in values) + " |")
+    return "\n".join(lines)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--retrieval", choices=["vector", "hybrid"], default="hybrid")
+    parser.add_argument("--rerank", choices=[*sorted(MODELS), "none"], default="nvidia")
+    parser.add_argument(
+        "--all", action="store_true", help="Compare vector, hybrid and hybrid+nvidia in one table"
+    )
+    parser.add_argument("--candidates", type=int, default=CANDIDATES, help="Chunks to rerank")
+    parser.add_argument("--collection", default=COLLECTION, help="Qdrant collection to search")
+    parser.add_argument("--tickers", nargs="*", help="Only questions whose sources are all these")
+    parser.add_argument("--limit", type=int, help="Only run the first N questions")
+    parser.add_argument("--save-baseline", action="store_true", help="Write evals/baseline.json")
+    parser.add_argument(
+        "--recall-only",
+        action="store_true",
+        help="Retrieval metrics only: no answer or judge calls",
+    )
+    args = parser.parse_args()
+    if args.all and args.save_baseline:
+        parser.error("--save-baseline needs a single setup, not --all")
+    load_dotenv()
+
+    golden = load_golden()
+    if args.tickers:
+        keep = {t.upper() for t in args.tickers}
+        golden = [
+            q for q in golden if q["sources"] and {s["company"] for s in q["sources"]} <= keep
+        ]
+    golden = golden[: args.limit]
+
+    judge_llm = None
+    if not args.recall_only:
+        judge_llm = CachedLLM(
+            # Free tier allows ~15 requests/min; a burst of 20 got 429s even with SDK retries.
+            LLMClient(JUDGE_BASE_URL, os.environ["GEMINI_API_KEY"], JUDGE_MODEL, min_interval=4.5),
+            CACHE_DIR,
+        )
+
+    rerank = None if args.rerank == "none" else args.rerank
+    configs = ALL_CONFIGS if args.all else [(args.retrieval, rerank)]
+    summaries = []
+    for retrieval, reranker in configs:
+        rag = from_env(retrieval, reranker, args.collection)
+        rag.candidates = args.candidates
+        if args.recall_only:
+            summaries.append(recall_only(rag, golden, args))
+            continue
+        rag.llm = CachedLLM(rag.llm, CACHE_DIR)
+        summaries.append(full_run(rag, judge_llm, golden, args))
+
+    if args.save_baseline:
+        BASELINE.write_text(json.dumps(summaries[0], indent=2) + "\n", encoding="utf-8")
+    if len(summaries) > 1:
+        print()
+        print(format_table(summaries))
 
 
 if __name__ == "__main__":

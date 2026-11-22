@@ -20,4 +20,4 @@ lint:
 	uv run ruff format --check src tests evals
 
 eval:
-	uv run python -m evals.run
+	uv run python -m evals.run --all

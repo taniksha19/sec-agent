@@ -191,3 +191,16 @@ def test_parse_verdict_reads_verdict_from_malformed_json():
     broken = '```json\n{"faithful": true, "reason": "<one sentence>}'
     assert parse_verdict(broken, "faithful")[0] is True
     assert parse_verdict('{"correct": false, "reason": "x', "correct")[0] is False
+
+
+def test_format_table_one_row_per_setup_and_blank_when_unmeasured():
+    from evals.run import format_table
+
+    recall = {"@1": 0.1, "@5": 0.5, "@10": 0.6}
+    full = {"retrieval": "hybrid+nvidia", "recall": recall, "accuracy": 0.75}
+    full |= {"faithfulness": 0.98, "refused_answerable": None}
+    table = format_table([{"retrieval": "vector", "recall": recall}, full])
+    lines = table.splitlines()
+    assert len(lines) == 4
+    assert lines[2] == "| vector | 0.100 | 0.500 | 0.600 |  |  |  |"
+    assert lines[3] == "| hybrid+nvidia | 0.100 | 0.500 | 0.600 | 0.750 | 0.980 |  |"

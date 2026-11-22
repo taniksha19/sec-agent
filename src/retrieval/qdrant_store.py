@@ -139,10 +139,14 @@ class QdrantStore:
             # Reciprocal rank fusion: merges by rank, so dense cosine and BM25 scores, which
             # are on different scales, never have to be normalized against each other.
             query=models.FusionQuery(fusion=models.Fusion.RRF),
-            limit=k,
+            # Fetch the whole fused list: RRF gives equal scores to mirrored ranks (1st + 3rd vs
+            # 3rd + 1st), Qdrant orders ties arbitrarily, and R@1 moved 0.37-0.40 between runs.
+            # Breaking ties by chunk_id here makes the top k reproducible.
+            limit=2 * PREFETCH_LIMIT,
             with_payload=True,
         )
-        return _results(response)
+        results = sorted(_results(response), key=lambda r: (-r.score, r.chunk.chunk_id))
+        return results[:k]
 
     def delete(self, ids: list[str]) -> None:
         if not ids:
