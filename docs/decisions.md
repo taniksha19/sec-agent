@@ -66,3 +66,23 @@ Template:
   4. Arithmetic for all derived answers recomputed.
   5. The 8 unanswerable questions: the facts are absent from the corpus (searched; NVIDIA mentions OpenAI but never revenue from it).
 - **Found:** Gemini 3.5 Flash's free tier allows only 20 requests/day (hit during this check). Gemini 3.5 Flash-Lite, the eval judge, has a separate quota.
+
+## 2026-11-22: Hybrid retrieval and reranker
+- **BM25 in Qdrant, not in Python memory:** chosen so one database serves dense, keyword and hybrid search (Phase 6 deploys one service; every API replica would otherwise hold its own index). Each point has a named dense vector and a BM25 sparse vector (fastembed `Qdrant/bm25`, IDF applied by Qdrant). Rank fusion (RRF) over 50 candidates from each.
+- **Measured (66 golden questions, same answer model and judge):**
+
+  | Retrieval | R@1 | R@5 | R@10 | Accuracy |
+  | --- | --- | --- | --- | --- |
+  | Vector | 0.190 | 0.478 | 0.599 | 0.530 |
+  | Hybrid | 0.198 | 0.513 | 0.612 | 0.545 |
+  | Hybrid + MiniLM-L6 (CPU) | 0.233 | 0.431 | 0.556 | 0.470 |
+  | Hybrid + bge-reranker-base (CPU) | 0.371 | 0.539 | 0.694 | 0.606 |
+  | **Hybrid + Nemotron 3.5 Rerank 8B (NVIDIA hosted)** | **0.565** | **0.737** | **0.741** | **0.727** |
+
+- **Hybrid alone** fixed 3 questions (exact terms: BoA net interest income, Walmart associates, Merck R&D) and broke 3 (keyword hits pushed the right chunk below top 5). The reranker is what turns the wider candidate list into a gain.
+- **MiniLM made results worse** (trained on web search; mis-ranks financial tables). **bge** helped but took 13.5 s per question on CPU. **NVIDIA's reranker** beat bge on 8 questions and lost none, at ~0.4 s per question.
+- **Chosen:** hybrid + NVIDIA rerank of 30 candidates is now the default (`from_env`, `make eval`). Tradeoff: a hosted dependency, and questions plus chunk text go to NVIDIA (already the case for the answer model). Local fallback if the endpoint is unavailable: bge (`--rerank bge`).
+- **vLLM was considered for speed and rejected:** it needs an NVIDIA GPU and self-hosted serving is out of scope.
+- **Retired endpoints:** NVIDIA's older rerankers (llama-3.2-nv-rerankqa-1b-v2, llama-nemotron-rerank-1b-v2) returned 410 Gone; check the catalog before relying on a model name.
+- **Noted:** R@10 (0.741) is barely above R@5 (0.737), so the 30-candidate pool now caps recall; a larger pool is cheap with a hosted reranker and worth testing. Qdrant keeps optimizing its index for a few minutes after a bulk rebuild, and evals in that window shift slightly; measure after it settles.
+- **Security review of the reranker:** no key leaks. Fixed before merge: the hosted response is validated (every passage scored exactly once, finite scores) and nothing is cached otherwise, since a defaulted score could float an unscored chunk into the prompt; retries also cover network errors, honor `Retry-After`, and don't sleep after the last attempt; cache writes are atomic. Checked: no cached NVIDIA score had been defaulted. **For Phase 4:** hybrid + rerank widens how an attacker-written chunk can reach the top 5 (keyword stuffing for BM25, "answer-shaped" text for the reranker), so the attack corpus should include both and attack success should be measured with rerank on and off. **For Phase 3:** the retry loop can hold a request ~1-2 min; give the API path a short time budget and fall back to no rerank.

@@ -18,6 +18,7 @@ from llm_gateway.client import NO_THINKING, LLMClient
 from retrieval.base import SearchResult, VectorStore
 from retrieval.embeddings import Embedder
 from retrieval.qdrant_store import QdrantStore
+from retrieval.rerank import CANDIDATES, Reranker
 from retrieval.sparse import SparseEmbedder
 
 TOP_K = 5
@@ -75,20 +76,25 @@ class BaselineRAG:
         llm: LLMClient,
         k: int = TOP_K,
         sparse: SparseEmbedder | None = None,
+        reranker: Reranker | None = None,
     ):
         self.store, self.embedder, self.llm, self.k = store, embedder, llm, k
-        self.sparse = sparse
+        self.sparse, self.reranker = sparse, reranker
 
     @property
     def retrieval(self) -> str:
-        return "hybrid" if self.sparse else "vector"
+        name = "hybrid" if self.sparse else "vector"
+        return f"{name}+{self.reranker.name}" if self.reranker else name
 
     def retrieve(self, question: str, k: int | None = None) -> list[SearchResult]:
         k = k or self.k
+        n = max(k, CANDIDATES) if self.reranker else k
         dense = self.embedder.embed_query(question)
         if self.sparse is None:
-            return self.store.search(dense, k)
-        return self.store.hybrid_search(dense, self.sparse.embed_query(question), k)
+            results = self.store.search(dense, n)
+        else:
+            results = self.store.hybrid_search(dense, self.sparse.embed_query(question), n)
+        return self.reranker.rerank(question, results, k) if self.reranker else results
 
     def answer(self, question: str) -> Answer:
         return self.generate(question, self.retrieve(question))
@@ -105,14 +111,16 @@ class BaselineRAG:
         )
 
 
-def from_env(retrieval: str = "vector") -> BaselineRAG:
+def from_env(retrieval: str = "hybrid", rerank: str | None = "nvidia") -> BaselineRAG:
+    """Defaults are the Phase 2 winner (docs/decisions.md); vector/no rerank is the baseline."""
     load_dotenv()
     embedder = Embedder()
     client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
     llm = LLMClient(extra_body=NO_THINKING)
     sparse = SparseEmbedder() if retrieval == "hybrid" else None
     store = QdrantStore(client, COLLECTION, embedder.dim)
-    return BaselineRAG(store, embedder, llm, sparse=sparse)
+    reranker = Reranker(rerank) if rerank else None
+    return BaselineRAG(store, embedder, llm, sparse=sparse, reranker=reranker)
 
 
 def main() -> None:

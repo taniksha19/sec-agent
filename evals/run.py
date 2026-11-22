@@ -1,6 +1,7 @@
 """Run the golden set through the baseline and score retrieval and answers.
 
-Usage: uv run python -m evals.run [--retrieval vector|hybrid] [--limit N] [--save-baseline]
+Usage: uv run python -m evals.run [--retrieval vector|hybrid] [--rerank nvidia|bge|minilm|none]
+                                  [--limit N] [--save-baseline]
 
 Recall@k: share of a question's gold sources found in the top-k retrieved chunks. A chunk finds a
 source if it is from the same company and contains the source's match strings (the figures from
@@ -26,6 +27,7 @@ from agent.baseline import NOT_FOUND, TOP_K, from_env
 from ingest.models import Chunk
 from llm_gateway.cache import CachedLLM
 from llm_gateway.client import LLMClient
+from retrieval.rerank import MODELS
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = REPO_ROOT / "data" / "golden" / "questions.jsonl"
@@ -151,13 +153,14 @@ def summarize(rows: list[dict]) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--retrieval", choices=["vector", "hybrid"], default="vector")
+    parser.add_argument("--retrieval", choices=["vector", "hybrid"], default="hybrid")
+    parser.add_argument("--rerank", choices=[*sorted(MODELS), "none"], default="nvidia")
     parser.add_argument("--limit", type=int, help="Only run the first N questions")
     parser.add_argument("--save-baseline", action="store_true", help="Write evals/baseline.json")
     args = parser.parse_args()
     load_dotenv()
 
-    rag = from_env(args.retrieval)
+    rag = from_env(args.retrieval, None if args.rerank == "none" else args.rerank)
     rag.llm = CachedLLM(rag.llm, CACHE_DIR)
     judge_llm = CachedLLM(
         # Free tier allows ~15 requests/min; a burst of 20 got 429s even with SDK retries.
