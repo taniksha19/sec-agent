@@ -27,8 +27,10 @@ MODELS = {
 HOSTED = {"nvidia"}
 NVIDIA_RERANK_URL = "https://ai.api.nvidia.com/v1/retrieval/nvidia/nemotron-3.5-rerank-8b/reranking"
 
-# How many retrieved chunks the reranker re-sorts; the main latency knob for local models.
-CANDIDATES = 30
+# How many retrieved chunks the reranker re-sorts. Measured with the NVIDIA reranker (66 golden
+# questions): 20 -> R@5 0.720, 30 -> 0.737, 50 -> 0.780. 50 is the hybrid prefetch ceiling.
+# Local models scale linearly with it (bge: 13.5 s per 30 chunks on a laptop CPU).
+CANDIDATES = 50
 
 RETRIES = 4
 RETRY_STATUS = {429, 500, 502, 503, 504}

@@ -155,3 +155,39 @@ def test_cache_key_includes_request_options(tmp_path):
     inner.extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
     CachedLLM(inner, tmp_path).chat("sys", "q")
     assert inner.calls == 2
+
+
+class RecordingJudge:
+    def __init__(self, reply):
+        self.reply, self.prompts = reply, []
+
+    def chat(self, system, user, max_tokens=800):
+        self.prompts.append(user)
+        return LLMResponse(text=self.reply, model="j", input_tokens=1, output_tokens=1)
+
+
+def test_faithfulness_sends_only_cited_sources_and_skips_refusals():
+    from agent.baseline import Answer
+    from evals.run import faithfulness
+    from retrieval.base import SearchResult
+
+    srcs = [SearchResult(chunk=chunk("AAPL", f"source text {i}"), score=0.0) for i in range(3)]
+    ans = Answer(question="q", text="Sales were $1 [2].", sources=srcs, cited=[2])
+    judge = RecordingJudge('{"faithful": true, "reason": "ok"}')
+    assert faithfulness(judge, ans) == (True, "ok")
+    assert "source text 1" in judge.prompts[0] and "source text 0" not in judge.prompts[0]
+
+    refusal = Answer(question="q", text=NOT_FOUND, sources=srcs, cited=[])
+    assert faithfulness(judge, refusal) == (None, "refusal")
+    assert len(judge.prompts) == 1
+
+
+def test_parse_verdict_requires_literal_true():
+    assert parse_verdict('{"faithful": "yes"}', "faithful")[0] is False
+    assert parse_verdict('{"faithful": true}', "faithful")[0] is True
+
+
+def test_parse_verdict_reads_verdict_from_malformed_json():
+    broken = '```json\n{"faithful": true, "reason": "<one sentence>}'
+    assert parse_verdict(broken, "faithful")[0] is True
+    assert parse_verdict('{"correct": false, "reason": "x', "correct")[0] is False

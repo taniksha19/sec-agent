@@ -125,6 +125,7 @@ Six phases, about one week each. Do them in order; each ends with a commit, a RE
 ### Phase 3: Agent and API layer
 
 - Build the LangGraph agent with tools: calculator, table lookup, and cross-company comparison.
+- Add a corrective retrieval loop in the graph: grade whether the retrieved chunks answer the question; if not, rewrite the query (company, period, better terms) and retrieve again, up to 3 rounds, then refuse. Split comparison questions into one sub-question per company. Measure against the Phase 2 accuracy.
 - Wrap the tools as MCP servers so the same tools work from other MCP clients.
 - Expose the agent through FastAPI, then put the Go (or TypeScript) gateway in front with API-key auth, rate limiting, and request logging.
 - Add Pinecone as the second `VectorStore` backend and run the golden set on both (Qdrant stays primary).

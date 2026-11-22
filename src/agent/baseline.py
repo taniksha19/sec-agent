@@ -77,9 +77,10 @@ class BaselineRAG:
         k: int = TOP_K,
         sparse: SparseEmbedder | None = None,
         reranker: Reranker | None = None,
+        candidates: int = CANDIDATES,
     ):
         self.store, self.embedder, self.llm, self.k = store, embedder, llm, k
-        self.sparse, self.reranker = sparse, reranker
+        self.sparse, self.reranker, self.candidates = sparse, reranker, candidates
 
     @property
     def retrieval(self) -> str:
@@ -88,7 +89,7 @@ class BaselineRAG:
 
     def retrieve(self, question: str, k: int | None = None) -> list[SearchResult]:
         k = k or self.k
-        n = max(k, CANDIDATES) if self.reranker else k
+        n = max(k, self.candidates) if self.reranker else k
         dense = self.embedder.embed_query(question)
         if self.sparse is None:
             results = self.store.search(dense, n)
