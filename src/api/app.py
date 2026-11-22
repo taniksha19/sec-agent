@@ -1,0 +1,92 @@
+"""HTTP API over the Phase 3 agent.
+
+Run: uv run uvicorn api.app:app --port 8000
+Then: curl -X POST localhost:8000/v1/ask -H "Content-Type: application/json" \\
+        -d '{"question": "How much did AMD spend on R&D in 2025?"}'
+
+Auth, rate limits and request logging live in the Go gateway in front of this service.
+"""
+
+import logging
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Request
+
+from api.models import AskRequest, AskResponse, Citation, Usage
+from retrieval.base import SearchResult
+
+log = logging.getLogger(__name__)
+QUOTE_CHARS = 300
+
+
+def citation(n: int, result: SearchResult) -> Citation:
+    c = result.chunk
+    body = c.text.split("\n", 1)[-1]  # drop the context header line
+    return Citation(
+        n=n,
+        chunk_id=c.chunk_id,
+        company=c.company,
+        ticker=c.ticker,
+        form_type=c.form_type,
+        fiscal_year=c.fiscal_year,
+        fiscal_period=c.fiscal_period,
+        section_title=c.section_title,
+        source_url=c.source_url,
+        page=c.page,
+        quote=body[:QUOTE_CHARS],
+    )
+
+
+def to_response(out: dict) -> AskResponse:
+    sources = out["sources"]
+    return AskResponse(
+        answer=out["answer"],
+        refused=out["refused"],
+        citations=[citation(n, sources[n - 1]) for n in out["cited"]],
+        sub_questions=[s.question for s in out["subs"]],
+        rounds=out["rounds_used"],
+        tool_calls=out["tool_calls"],
+        usage=Usage(
+            llm_calls=out["llm_calls"],
+            input_tokens=out["input_tokens"],
+            output_tokens=out["output_tokens"],
+        ),
+        latency_ms=out["latency_ms"],
+    )
+
+
+def create_app(agent=None) -> FastAPI:
+    """Tests pass a fake agent; the server builds the real one once at startup."""
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if agent is None:
+            from agent.graph import from_env
+
+            app.state.agent = from_env()
+        else:
+            app.state.agent = agent
+        yield
+
+    app = FastAPI(title="SEC Filings Research Agent", version="0.3.0", lifespan=lifespan)
+
+    @app.get("/healthz")
+    def healthz() -> dict:
+        return {"status": "ok"}
+
+    # A sync route: FastAPI runs it in a worker thread, so a slow agent run doesn't block others.
+    @app.post("/v1/ask", response_model=AskResponse)
+    def ask(body: AskRequest, request: Request) -> AskResponse:
+        try:
+            out = request.app.state.agent.run(body.question)
+        except Exception:
+            # Upstream errors (LLM, reranker, Qdrant) may carry URLs or request details;
+            # log them here and return a generic message.
+            log.exception("agent run failed")
+            raise HTTPException(502, "The research agent failed upstream.") from None
+        return to_response(out)
+
+    return app
+
+
+app = create_app()

@@ -1,4 +1,4 @@
-.PHONY: install up down download test lint eval
+.PHONY: install up down download test lint eval api
 
 install:
 	uv sync
@@ -21,3 +21,6 @@ lint:
 
 eval:
 	uv run python -m evals.run --all
+
+api:
+	uv run uvicorn api.app:app --port 8000
