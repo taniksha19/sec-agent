@@ -97,3 +97,11 @@ def test_search_filings_passes_only_given_filters():
     assert retrieve.calls[0] == ("q", 3, {"ticker": ["AMD", "NVDA"]})
     search_filings(retrieve, SearchFilingsInput(query="q"))
     assert retrieve.calls[1][2] is None
+
+
+def test_compare_rejects_infinite_or_nan_values():
+    from pydantic import ValidationError
+
+    for bad in (float("inf"), float("nan")):
+        with pytest.raises(ValidationError):
+            CompareInput(metric="m", values=[{"ticker": "A", "fiscal_year": 2025, "value": bad}])

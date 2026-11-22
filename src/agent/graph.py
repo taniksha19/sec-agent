@@ -6,12 +6,15 @@
 
 Usage: uv run python -m agent.graph "Compare R&D growth for NVIDIA and AMD from 2023 to 2025"
 
-The graph is fixed (not a free ReAct loop) so LLM calls are bounded and search queries never
-come from retrieved text alone; see docs/decisions.md.
+The graph is fixed (not a free ReAct loop) so LLM calls and tool calls are bounded. Rewritten
+queries are written by a model that has read retrieved (untrusted) text: they stay inside the
+planner's ticker filter and are length-capped, and every round's evidence is kept. Phase 4
+sanitizes chunks before the grader and answer prompts.
 """
 
 import csv
 import json
+import logging
 import operator
 import re
 import sys
@@ -30,11 +33,15 @@ from tools.compare import compare
 from tools.models import CalculateInput, CompareInput, LookupTableInput
 from tools.search import lookup_table
 
+log = logging.getLogger(__name__)
+
 MAX_ROUNDS = 3
 MAX_SUB_QUESTIONS = 4
 MAX_TOOL_STEPS = 6
 CHUNKS_PER_SUB = 5
 MAX_TABLE_ROWS = 8
+MAX_TOOL_CALLS = 8  # per question, across all answer turns
+MAX_QUERY_CHARS = 300
 COMPANIES = Path(__file__).resolve().parents[2] / "data" / "companies.csv"
 JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
@@ -188,13 +195,21 @@ class Agent:
         prompt = build_prompt(sub.question, state["candidates"])
         resp = self.llm.chat(GRADE_PROMPT, prompt, max_tokens=200)
         verdict = parse_json(resp.text)
-        better = str(verdict.get("better_query") or "").strip()
+        better = str(verdict.get("better_query") or "").strip()[:MAX_QUERY_CHARS]
+        # Every round's chunks are kept: the grader reads untrusted text, so a poisoned chunk
+        # that steers the rewrite must not also be able to throw away earlier evidence.
+        evidence = add_unique(state["evidence"], state["candidates"])
         if verdict.get("answered") is not True and state["round"] < MAX_ROUNDS and better:
-            return {"query": better, "round": state["round"] + 1, **usage(resp)}
-        # Done with this sub-question: keep this round's chunks, move to the next one.
+            return {
+                "query": better,
+                "round": state["round"] + 1,
+                "evidence": evidence,
+                **usage(resp),
+            }
+        # Done with this sub-question: move to the next one.
         nxt = state["current"] + 1
         update = {
-            "evidence": add_unique(state["evidence"], state["candidates"]),
+            "evidence": evidence,
             "rounds_used": max(state["rounds_used"], state["round"]),
             "current": nxt,
             "round": 1,
@@ -237,7 +252,13 @@ class Agent:
                 }
             )
             for c in resp.tool_calls:
-                result, call = self.run_tool(c["name"], c["arguments"], sources)
+                if len(calls) >= MAX_TOOL_CALLS:
+                    # Each lookup_table is a search + rerank; retrieved text could ask for
+                    # dozens. The model still gets a reply per call id, as the API requires.
+                    result = json.dumps({"error": "tool budget exhausted; answer now"})
+                    call = ToolCall(name=c["name"], arguments={}, ok=False)
+                else:
+                    result, call = self.run_tool(c["name"], c["arguments"], sources)
                 calls.append(call)
                 messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
         return {
@@ -258,6 +279,8 @@ class Agent:
             args = json.loads(arguments or "{}")
         except json.JSONDecodeError:
             args = {}
+        if not isinstance(args, dict):  # e.g. "[1]": valid JSON, not an argument object
+            args = {}
         try:
             if name == "calculate":
                 result = calculate(CalculateInput.model_validate(args)).model_dump_json()
@@ -272,6 +295,12 @@ class Agent:
                 raise ValueError(f"unknown tool {name!r}")
         except (ValueError, ValidationError) as e:
             return json.dumps({"error": str(e)[:300]}), ToolCall(
+                name=name, arguments=args, ok=False
+            )
+        except Exception:
+            # Anything else (e.g. a search backend error) fails this call, not the whole run.
+            log.exception("tool %s failed", name)
+            return json.dumps({"error": "tool failed"}), ToolCall(
                 name=name, arguments=args, ok=False
             )
         return result, ToolCall(name=name, arguments=args, ok=True)

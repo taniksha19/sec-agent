@@ -133,3 +133,11 @@ Template:
 - **Generation (2):** table-02 gave the filing's rounded 10% instead of computing 9.6%; multi_hop-08 left out the middle year.
 - **Judge (1):** fact-23 answered 97.6% for "more than 97 percent" and was marked wrong.
 - No answer was unfaithful to its citations, and no wrong figure was stated: every retrieval failure ended in a refusal.
+
+## 2026-11-22: Phase 3 agent shape and its security bounds
+- **Chosen:** a fixed LangGraph graph (plan per company -> retrieve -> grade -> rewrite, max 3 rounds -> answer with calculate / lookup_table / compare), not a free ReAct agent. LLM calls and tool calls stay bounded, and search stays inside the planner's ticker filter.
+- **Security review (2026-11-22) fixes applied:** tool arguments that aren't a JSON object fail that call instead of the run; at most 8 tool calls per question; every retrieval round's chunks are kept, so a poisoned chunk that steers the grader's rewrite can't discard earlier evidence; rewritten queries capped at 300 characters; compare rejects inf/NaN and caps list sizes.
+- **Deferred to Phase 4 (sanitizer) and the gateway:**
+  - Sanitize chunks before the grader prompt as well as the answer prompt, wrap them in data delimiters (a chunk can forge a `[n]` block or a `Question:` line today), and cover the context header line, since table captions now carry up to 280 characters of filing text.
+  - Sanitize tool results (lookup_table returns filing cells verbatim) and filter `tool_calls[].arguments` in API responses.
+  - Per-request time budget and lower SDK retries on the API path; disable `/docs` and `/openapi.json` or block them at the gateway.

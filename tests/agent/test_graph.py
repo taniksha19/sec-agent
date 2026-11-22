@@ -176,3 +176,35 @@ def test_answer_turns_are_capped_and_last_turn_offers_no_tools():
     out = Agent(FakeRAG(), llm, COMPANIES).run("q")
     assert out["answer"] == "done [1]"
     assert seen_tools[-1] is None and all(seen_tools[:-1])
+
+
+def test_non_object_tool_arguments_fail_the_call_not_the_run():
+    bad = {"id": "x", "name": "calculate", "arguments": "[1]"}
+    llm = ScriptedLLM(ONE_SUB, [YES], [reply(tool_calls=[bad]), reply("done")])
+    out = Agent(FakeRAG(), llm, COMPANIES).run("q")
+    assert [(t.name, t.ok, t.arguments) for t in out["tool_calls"]] == [("calculate", False, {})]
+    assert out["answer"] == "done"
+
+
+def test_tool_calls_are_capped_per_question():
+    from agent.graph import MAX_TOOL_CALLS
+
+    many = [call("calculate", {"expression": "1+1"}, f"id{i}") for i in range(MAX_TOOL_CALLS + 5)]
+    llm = ScriptedLLM(ONE_SUB, [YES], [reply(tool_calls=many), reply("done")])
+    out = Agent(FakeRAG(), llm, COMPANIES).run("q")
+    oks = [t.ok for t in out["tool_calls"]]
+    assert oks == [True] * MAX_TOOL_CALLS + [False] * 5
+    tool_msgs = [m for m in llm.answer_messages[-1] if m["role"] == "tool"]
+    assert len(tool_msgs) == len(many)  # every call id still gets a reply
+    assert "budget" in tool_msgs[-1]["content"]
+
+
+def test_evidence_from_every_round_is_kept_and_rewrites_are_capped():
+    from agent.graph import MAX_QUERY_CHARS
+
+    long_query = "x" * (MAX_QUERY_CHARS + 50)
+    llm = ScriptedLLM(ONE_SUB, [{"answered": False, "better_query": long_query}, YES], [reply("a")])
+    rag = FakeRAG()
+    out = Agent(rag, llm, COMPANIES).run("q")
+    assert len(rag.calls[1][0]) == MAX_QUERY_CHARS
+    assert [r.chunk.chunk_id for r in out["sources"]] == ["AMD:1", "AMD:2"]
