@@ -141,3 +141,20 @@ Template:
   - Sanitize chunks before the grader prompt as well as the answer prompt, wrap them in data delimiters (a chunk can forge a `[n]` block or a `Question:` line today), and cover the context header line, since table captions now carry up to 280 characters of filing text.
   - Sanitize tool results (lookup_table returns filing cells verbatim) and filter `tool_calls[].arguments` in API responses.
   - Per-request time budget and lower SDK retries on the API path; disable `/docs` and `/openapi.json` or block them at the gateway.
+
+## 2026-11-22: Table captions from the text above each table
+- **Problem:** the agent cited NVIDIA's stock-compensation table row for R&D ($3,423M) instead of the income statement ($12,914M). 32% of table chunks had no caption, so the two tables looked alike to search.
+- **Fix:** `table_caption` skips page junk (page numbers, "Table of Contents", "(continued)") and takes the last short block or sentence above the table, plus the nearest short heading. Measured on a 12-filing sample, tables without a caption fell to about 22%.
+- **Measured (58 questions, hybrid + NVIDIA rerank, recall-only):**
+
+  | Chunks | R@1 | R@5 | R@10 |
+  | --- | --- | --- | --- |
+  | old captions | 0.728 | 0.841 | 0.858 |
+  | new captions | 0.694 | 0.849 | 0.875 |
+
+  Changed: table-07 went from a miss to found in the top 5; fact-05, table-03 and multi_hop-07 fell from rank 1 but stayed in the top 5; table-02 fell out of the top 5 (still in the top 10).
+- **Chosen:** new captions. The agent reads the top 5 per sub-question, so R@5 and R@10 matter more than R@1. On "Compare R&D growth for NVIDIA and AMD from 2023 to 2025", the agent now cites both income statements, gets $7,339M -> $12,914M (+76.0%) and $5,872M -> $8,091M (+37.8%), and uses lookup_table, calculate and compare (7 LLM calls, 8.2 s).
+
+## 2026-11-22: API container and local exposure
+- `docker compose up` now runs the API next to Qdrant. Security review fixes: Qdrant and the API publish on 127.0.0.1 only (Qdrant has no API key, so anyone who can reach it can plant chunks); the API container gets only the 5 variables it reads, not all of `.env`; code and packages are root-owned and only `data/cache` is writable; a Host-header allowlist blocks DNS rebinding; `/docs` and `/openapi.json` are off; `.dockerignore` is an allowlist.
+- **Deferred:** pin base images and embedding-model revisions by digest (Phase 6 CI); resource limits and rate limits (Go gateway).

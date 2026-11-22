@@ -24,7 +24,7 @@ build-backend = "hatchling.build"
 # Each top-level folder under src/ is its own package (matches plan.md layout).
 # Add new packages here as they are created.
 [tool.hatch.build.targets.wheel]
-packages = ["src/ingest", "src/retrieval", "src/agent", "src/llm_gateway"]
+packages = ["src/ingest", "src/retrieval", "src/agent", "src/llm_gateway", "src/tools", "src/api"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

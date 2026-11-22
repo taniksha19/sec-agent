@@ -50,7 +50,7 @@ class FakeAgent:
 
 
 def client(agent):
-    return TestClient(create_app(agent))
+    return TestClient(create_app(agent), base_url="http://localhost")
 
 
 def test_healthz():
@@ -88,3 +88,11 @@ def test_upstream_failure_is_502_without_details():
         r = c.post("/v1/ask", json={"question": "q"})
     assert r.status_code == 502
     assert "internal.example" not in r.text
+
+
+def test_rejects_unknown_host_and_hides_docs():
+    client = TestClient(create_app(FakeAgent()), base_url="http://evil.example")
+    assert client.get("/healthz").status_code == 400
+    local = TestClient(create_app(FakeAgent()), base_url="http://localhost")
+    assert local.get("/docs").status_code == 404
+    assert local.get("/openapi.json").status_code == 404

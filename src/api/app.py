@@ -11,12 +11,15 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from api.models import AskRequest, AskResponse, Citation, Usage
 from retrieval.base import SearchResult
 
 log = logging.getLogger(__name__)
 QUOTE_CHARS = 300
+# Rejects other Host headers, so a web page can't reach the local API through DNS rebinding.
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "api"]
 
 
 def citation(n: int, result: SearchResult) -> Citation:
@@ -68,7 +71,15 @@ def create_app(agent=None) -> FastAPI:
             app.state.agent = agent
         yield
 
-    app = FastAPI(title="SEC Filings Research Agent", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(
+        title="SEC Filings Research Agent",
+        version="0.3.0",
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
     @app.get("/healthz")
     def healthz() -> dict:

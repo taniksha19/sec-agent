@@ -1,0 +1,7 @@
+# Allowlist: only what the Dockerfile copies is sent to the build. .env never is.
+*
+!pyproject.toml
+!uv.lock
+!src
+!data/companies.csv
+**/__pycache__
