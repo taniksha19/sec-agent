@@ -24,6 +24,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from agent.baseline import COLLECTION, NOT_FOUND, TOP_K, Answer, from_env
+from agent.graph import Agent
 from ingest.models import Chunk
 from llm_gateway.cache import CachedLLM
 from llm_gateway.client import LLMClient
@@ -217,13 +218,47 @@ def recall_only(rag, golden: list[dict], args) -> dict:
     return summary
 
 
-def full_run(rag, judge_llm, golden: list[dict], args) -> dict:
+def agent_answer(agent, question: str) -> tuple[Answer, dict]:
+    out = agent.run(question)
+    ans = Answer(
+        question=question,
+        text=out["answer"],
+        sources=out["sources"],
+        cited=out["cited"],
+        input_tokens=out["input_tokens"],
+        output_tokens=out["output_tokens"],
+    )
+    extra = {
+        "sub_questions": [s.question for s in out["subs"]],
+        "rounds": out["rounds_used"],
+        "tool_calls": [t.model_dump() for t in out["tool_calls"]],
+        "llm_calls": out["llm_calls"],
+        "latency_ms": out["latency_ms"],
+    }
+    return ans, extra
+
+
+def percentile(xs: list[float], p: float) -> float:
+    xs = sorted(xs)
+    return xs[min(len(xs) - 1, round(p * (len(xs) - 1)))]
+
+
+def full_run(rag, judge_llm, golden: list[dict], args, agent=None) -> dict:
+    """Golden set through the baseline RAG, or through the Phase 3 agent when given one.
+    For the agent, recall is over every chunk it gathered (all sub-questions and table
+    lookups, in that order), so its R@k is not comparable with single-search R@k."""
     rows = []
     start = time.monotonic()
+    name = "agent" if agent else rag.retrieval
     for i, q in enumerate(golden, 1):
-        results = rag.retrieve(q["question"], max(KS))
+        extra = {}
+        if agent:
+            ans, extra = agent_answer(agent, q["question"])
+            results = ans.sources
+        else:
+            results = rag.retrieve(q["question"], max(KS))
+            ans = rag.generate(q["question"], results[:TOP_K])
         chunks = [r.chunk for r in results]
-        ans = rag.generate(q["question"], results[:TOP_K])
 
         sources = q["sources"]
         recall = {str(k): recall_at_k(sources, chunks, k) for k in KS} if sources else None
@@ -248,17 +283,28 @@ def full_run(rag, judge_llm, golden: list[dict], args) -> dict:
                 "retrieved": [r.chunk.chunk_id for r in results],
                 "input_tokens": ans.input_tokens,
                 "output_tokens": ans.output_tokens,
+                **extra,
             }
         )
         print(
-            f"[{rag.retrieval} {i}/{len(golden)}] {q['id']}: {'OK ' if correct else 'BAD'} "
+            f"[{name} {i}/{len(golden)}] {q['id']}: {'OK ' if correct else 'BAD'} "
             f"recall@5={recall['5'] if recall else '-'}"
         )
 
     summary = summarize(rows)
+    if agent:
+        latencies = [r["latency_ms"] for r in rows]
+        summary["agent"] = {
+            "avg_llm_calls": round(sum(r["llm_calls"] for r in rows) / len(rows), 2),
+            "used_tools": round(sum(bool(r["tool_calls"]) for r in rows) / len(rows), 3),
+            "failed_tool_calls": sum(not t["ok"] for r in rows for t in r["tool_calls"]),
+            "avg_rounds": round(sum(r["rounds"] for r in rows) / len(rows), 2),
+            "latency_ms_p50": percentile(latencies, 0.5),
+            "latency_ms_p95": percentile(latencies, 0.95),
+        }
     summary.update(
         {
-            "retrieval": rag.retrieval,
+            "retrieval": name,
             "collection": args.collection,
             "tickers": args.tickers,
             "rerank_candidates": rag.candidates if rag.reranker else None,
@@ -270,7 +316,7 @@ def full_run(rag, judge_llm, golden: list[dict], args) -> dict:
             "wall_seconds": round(time.monotonic() - start),
         }
     )
-    out = write_run("run", rag.retrieval, summary, rows)
+    out = write_run("run", name, summary, rows)
     print(json.dumps(summary, indent=2))
     print(f"Details: {out}")
     return summary
@@ -301,6 +347,9 @@ def main() -> None:
     parser.add_argument(
         "--all", action="store_true", help="Compare vector, hybrid and hybrid+nvidia in one table"
     )
+    parser.add_argument(
+        "--agent", action="store_true", help="Run the Phase 3 LangGraph agent (hybrid + nvidia)"
+    )
     parser.add_argument("--candidates", type=int, default=CANDIDATES, help="Chunks to rerank")
     parser.add_argument("--collection", default=COLLECTION, help="Qdrant collection to search")
     parser.add_argument("--tickers", nargs="*", help="Only questions whose sources are all these")
@@ -314,6 +363,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.all and args.save_baseline:
         parser.error("--save-baseline needs a single setup, not --all")
+    if args.agent and (args.all or args.recall_only):
+        parser.error("--agent runs alone and needs the judge (no --all or --recall-only)")
     load_dotenv()
 
     golden = load_golden()
@@ -342,7 +393,8 @@ def main() -> None:
             summaries.append(recall_only(rag, golden, args))
             continue
         rag.llm = CachedLLM(rag.llm, CACHE_DIR)
-        summaries.append(full_run(rag, judge_llm, golden, args))
+        agent = Agent(rag, rag.llm) if args.agent else None
+        summaries.append(full_run(rag, judge_llm, golden, args, agent))
 
     if args.save_baseline:
         BASELINE.write_text(json.dumps(summaries[0], indent=2) + "\n", encoding="utf-8")
