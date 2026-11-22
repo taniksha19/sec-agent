@@ -8,7 +8,7 @@ Production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings r
 
 ## Current status
 
-- **Current phase:** Phase 1 (Data and baseline RAG)
+- **Current phase:** Phase 2 (Better retrieval and evals). Phase 1 done 2026-11-22
 - Update this line when a phase's acceptance criteria pass.
 
 ## Out of scope

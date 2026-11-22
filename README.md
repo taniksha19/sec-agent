@@ -2,7 +2,7 @@
 
 A production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings releases) that answers financial questions with citations, defends against prompt injection in retrieved documents, and runs on Kubernetes with measured latency, quality, and cost.
 
-> Status: **Phase 1 (Data and baseline RAG)** in progress. See [plan.md](plan.md) for the full build plan.
+> Status: Phase 1 (data and baseline RAG) done. **Phase 2 (better retrieval and evals)** next. See [plan.md](plan.md) for the full build plan.
 
 ## Results
 
