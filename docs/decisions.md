@@ -125,3 +125,11 @@ Template:
 ## 2026-11-22: Deterministic tie-break after hybrid fusion
 - **Problem (measured):** with no code or index change, hybrid R@1 came out 0.371, 0.397 and 0.388 on repeat runs (R@5 and R@10 stable). RRF gives equal scores to mirrored ranks (1st dense + 3rd BM25 equals 3rd dense + 1st BM25), and Qdrant returns tied points in arbitrary order.
 - **Chosen:** fetch the whole fused list (at most 2 x 50), sort by score then `chunk_id`, cut to k. Three repeat runs then gave 0.388 / 0.586 / 0.716 each time, and hybrid + NVIDIA rerank stayed 0.728 / 0.841 / 0.858.
+
+## 2026-11-22: Phase 2 close: remaining failures
+- Final setup (hybrid + NVIDIA rerank of 50, contextual chunk headers) fails 11 of 66.
+- **Retrieval miss, nothing relevant in top 10 (4):** fact-14, table-07, table-12, multi_hop-01. All refused.
+- **Two-company questions, only one company retrieved (4):** multi_hop-02, -03, -05, -07. All refused. Phase 3 splits these into one sub-question per company.
+- **Generation (2):** table-02 gave the filing's rounded 10% instead of computing 9.6%; multi_hop-08 left out the middle year.
+- **Judge (1):** fact-23 answered 97.6% for "more than 97 percent" and was marked wrong.
+- No answer was unfaithful to its citations, and no wrong figure was stated: every retrieval failure ended in a refusal.
