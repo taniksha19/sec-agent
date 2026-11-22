@@ -23,7 +23,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from agent.baseline import NOT_FOUND, TOP_K, Answer, from_env
+from agent.baseline import COLLECTION, NOT_FOUND, TOP_K, Answer, from_env
 from ingest.models import Chunk
 from llm_gateway.cache import CachedLLM
 from llm_gateway.client import LLMClient
@@ -181,17 +181,50 @@ def summarize(rows: list[dict]) -> dict:
     }
 
 
+def recall_only(rag, golden: list[dict], args) -> None:
+    """Retrieval metrics without any LLM call: free, fast, and unaffected by judge quotas.
+    For chunking and retrieval experiments; accuracy still needs the full run."""
+    rows = []
+    for q in golden:
+        if not q["sources"]:
+            continue
+        chunks = [r.chunk for r in rag.retrieve(q["question"], max(KS))]
+        recall = {str(k): recall_at_k(q["sources"], chunks, k) for k in KS}
+        rows.append({"id": q["id"], "type": q["type"], "recall": recall})
+    summary = {
+        "n": len(rows),
+        "recall": {
+            f"@{k}": round(sum(r["recall"][str(k)] for r in rows) / len(rows), 3) for k in KS
+        },
+        "retrieval": rag.retrieval,
+        "collection": args.collection,
+        "tickers": args.tickers,
+    }
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    out = RESULTS_DIR / f"recall-{stamp}-{rag.retrieval}.json"
+    out.write_text(json.dumps({"summary": summary, "rows": rows}, indent=2), encoding="utf-8")
+    print(json.dumps(summary))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--retrieval", choices=["vector", "hybrid"], default="hybrid")
     parser.add_argument("--rerank", choices=[*sorted(MODELS), "none"], default="nvidia")
     parser.add_argument("--candidates", type=int, default=CANDIDATES, help="Chunks to rerank")
+    parser.add_argument("--collection", default=COLLECTION, help="Qdrant collection to search")
+    parser.add_argument("--tickers", nargs="*", help="Only questions whose sources are all these")
     parser.add_argument("--limit", type=int, help="Only run the first N questions")
     parser.add_argument("--save-baseline", action="store_true", help="Write evals/baseline.json")
+    parser.add_argument(
+        "--recall-only",
+        action="store_true",
+        help="Retrieval metrics only: no answer or judge calls",
+    )
     args = parser.parse_args()
     load_dotenv()
 
-    rag = from_env(args.retrieval, None if args.rerank == "none" else args.rerank)
+    rag = from_env(args.retrieval, None if args.rerank == "none" else args.rerank, args.collection)
     rag.candidates = args.candidates
     rag.llm = CachedLLM(rag.llm, CACHE_DIR)
     judge_llm = CachedLLM(
@@ -200,9 +233,18 @@ def main() -> None:
         CACHE_DIR,
     )
 
-    golden = load_golden()[: args.limit]
+    golden = load_golden()
+    if args.tickers:
+        keep = {t.upper() for t in args.tickers}
+        golden = [
+            q for q in golden if q["sources"] and {s["company"] for s in q["sources"]} <= keep
+        ]
+    golden = golden[: args.limit]
     rows = []
     start = time.monotonic()
+    if args.recall_only:
+        recall_only(rag, golden, args)
+        return
     for i, q in enumerate(golden, 1):
         results = rag.retrieve(q["question"], max(KS))
         chunks = [r.chunk for r in results]
@@ -242,6 +284,8 @@ def main() -> None:
     summary.update(
         {
             "retrieval": rag.retrieval,
+            "collection": args.collection,
+            "tickers": args.tickers,
             "rerank_candidates": rag.candidates if rag.reranker else None,
             "answer_model": rag.llm.model,
             "judge_model": JUDGE_MODEL,

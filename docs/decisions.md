@@ -92,3 +92,18 @@ Template:
 - **Faithfulness:** the judge sees the answer and only the chunks it cites, and checks every claim is stated in (or computed from) the cited chunk; uncited claims count as unfaithful; refusals are excluded. Final config: 0.978 (44/45). The one miss added a Tesla detail that its cited chunk does not contain.
 - **Judge parsing:** Flash-Lite once returned `{"faithful": true, "reason": "<one sentence>}` (unclosed string), which counted as a failure. The parser now falls back to reading just the verdict field from malformed JSON.
 - **Corrective retrieval loop** (grade chunks, rewrite query, retry up to 3 rounds) was proposed and moved to Phase 3, where it is built as LangGraph nodes with per-company question splitting; plan.md updated.
+
+## 2026-11-22: Contextual chunk headers and multi-row table headers
+- **Problem (measured):** most remaining table misses were retrieval misses. The AMD income statement chunk ranked below 200 in dense search for "How much did AMD spend on R&D in 2025?": the chunk was labels and numbers, with no company name, table title or year in words. 37% of chunks (17,705) are tables. Split tables also repeated only their first header row ("Year Ended"), losing the row with the dates.
+- **Change:** every chunk starts with a context line (company, ticker, form, fiscal period, section, and for tables the short text block above the table as its title). Split tables repeat all leading header rows up to the first body row.
+- **Measured on a 5-company subset** (AMD, NVDA, TGT, COST, MRK; the 18 golden questions sourced only from them; separate collections, same retrieval code; `make eval --recall-only`, so no LLM calls):
+
+  | Chunks | Retrieval | R@1 | R@5 |
+  | --- | --- | --- | --- |
+  | Old | hybrid | 0.139 | 0.417 |
+  | New | hybrid | 0.417 | 0.583 |
+  | Old | hybrid + NVIDIA rerank | 0.361 | 0.528 |
+  | New | hybrid + NVIDIA rerank | 0.639 | 0.750 |
+
+- **Chosen:** new chunking for the full corpus. Accuracy on the full set is measured after the re-embed.
+- **Judge quota:** Gemini 3.5 Flash-Lite's free tier is 500 requests/day (hit during this experiment; each question now costs 2 judge calls with faithfulness). Added `--recall-only` to `make eval` for retrieval experiments that need no LLM.

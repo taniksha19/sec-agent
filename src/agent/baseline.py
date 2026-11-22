@@ -112,14 +112,16 @@ class BaselineRAG:
         )
 
 
-def from_env(retrieval: str = "hybrid", rerank: str | None = "nvidia") -> BaselineRAG:
+def from_env(
+    retrieval: str = "hybrid", rerank: str | None = "nvidia", collection: str = COLLECTION
+) -> BaselineRAG:
     """Defaults are the Phase 2 winner (docs/decisions.md); vector/no rerank is the baseline."""
     load_dotenv()
     embedder = Embedder()
     client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
     llm = LLMClient(extra_body=NO_THINKING)
     sparse = SparseEmbedder() if retrieval == "hybrid" else None
-    store = QdrantStore(client, COLLECTION, embedder.dim)
+    store = QdrantStore(client, collection, embedder.dim)
     reranker = Reranker(rerank) if rerank else None
     return BaselineRAG(store, embedder, llm, sparse=sparse, reranker=reranker)
 

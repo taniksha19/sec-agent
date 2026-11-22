@@ -357,12 +357,33 @@ def pack(units: list[Unit]) -> list[tuple[str, int]]:
     return chunks
 
 
+# A body row: a text label, then a cell that is a figure (not a bare year like 2025).
+FIGURE_CELL_RE = re.compile(r"^\(?\$?\s*\d[\d,]*(\.\d+)?\s*\)?%?$")
+YEAR_RE = re.compile(r"^(19|20)\d\d$")
+MAX_HEADER_ROWS = 4
+
+
+def is_body_row(row: str) -> bool:
+    label, *cells = row.split(" | ")
+    return bool(re.search(r"[A-Za-z]", label)) and any(
+        FIGURE_CELL_RE.match(c.strip()) and not YEAR_RE.match(c.strip()) for c in cells
+    )
+
+
 def table_chunks(block: Block) -> list[tuple[str, int]]:
-    """Tables are their own chunks. Big tables split by rows, repeating the header row."""
+    """Tables are their own chunks. Big tables split by rows, repeating the header rows.
+
+    Headers often span several rows ("Year Ended" / the dates / "(In millions)"), so every
+    leading row before the first body row repeats; repeating only the first row lost the years.
+    """
     rows = block.text.split("\n")
     if count_tokens(block.text) <= CHUNK_TOKENS:
         return [(block.text, block.page)]
-    header, body = rows[0], rows[1:]
+    n_header = 0
+    while n_header < min(MAX_HEADER_ROWS, len(rows) - 1) and not is_body_row(rows[n_header]):
+        n_header += 1
+    n_header = max(n_header, 1)
+    header, body = "\n".join(rows[:n_header]), rows[n_header:]
     budget = CHUNK_TOKENS - count_tokens(header)
     chunks, current, used = [], [], 0
     for row in body:
@@ -377,28 +398,50 @@ def table_chunks(block: Block) -> list[tuple[str, int]]:
     return chunks
 
 
+# Short text right above a table is usually its title ("Consolidated Statements of Operations").
+CAPTION_CHARS = 150
+FORM_KINDS = {"10-K": "annual report", "10-Q": "quarterly report", "8-K": "earnings release"}
+
+
+def context_header(filing: Filing, company: Company, section: str, caption: str | None) -> str:
+    """First line of every chunk: where it came from. A table chunk is often just labels and
+    numbers; without this, "AMD R&D in 2025" had nothing to match (the AMD income statement
+    ranked below 200 in dense search)."""
+    if filing.fiscal_year:
+        period = f"fiscal {filing.fiscal_year}"
+        if filing.fiscal_period != "FY":
+            period += f" {filing.fiscal_period}"
+    else:
+        period = f"period ended {filing.period_of_report}"
+    kind = FORM_KINDS[filing.form_type]
+    header = f"{company.name} ({filing.ticker}) {filing.form_type} {kind}, {period}. {section}."
+    return f"{header} Table: {caption}." if caption else header
+
+
 def chunk_filing(filing: Filing, company: Company) -> tuple[list[Chunk], list[str]]:
     html = decode((REPO_ROOT / filing.local_path).read_bytes())
     sections = split_sections(extract_blocks(html), filing.form_type)
 
     chunks: list[Chunk] = []
     for section_id, title, blocks in sections:
-        pieces: list[tuple[str, int, bool]] = []
+        pieces: list[tuple[str, int, bool, str | None]] = []
         run: list[Block] = []  # consecutive text blocks, packed together
         for block in [*blocks, None]:
             if block is not None and block.kind == "text":
                 run.append(block)
                 continue
-            pieces += [(t, pg, False) for t, pg in pack(text_units(run))]
+            caption = run[-1].text if run and len(run[-1].text) <= CAPTION_CHARS else None
+            pieces += [(t, pg, False, None) for t, pg in pack(text_units(run))]
             run = []
             if block is not None:
-                pieces += [(t, pg, True) for t, pg in table_chunks(block)]
+                pieces += [(t, pg, True, caption) for t, pg in table_chunks(block)]
 
-        for index, (text, page, is_table) in enumerate(pieces):
+        for index, (text, page, is_table, caption) in enumerate(pieces):
+            header = context_header(filing, company, title, caption)
             chunks.append(
                 Chunk(
                     chunk_id=Chunk.make_id(filing.accession_number, section_id, index),
-                    text=text,
+                    text=f"{header}\n{text}",
                     ticker=filing.ticker,
                     company=company.name,
                     form_type=filing.form_type,
@@ -425,6 +468,7 @@ REQUIRED = {"10-K": {"item_1a", "item_7", "item_8"}, "10-Q": {"part_i_item_1", "
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--tickers", nargs="*", help="Subset of tickers (default: all)")
+    parser.add_argument("--out", type=Path, default=PROCESSED_DIR, help="Output directory")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -435,7 +479,7 @@ def main() -> None:
     total = 0
     for d in dirs:
         company = Company.model_validate_json((d / "company.json").read_text(encoding="utf-8"))
-        out_dir = PROCESSED_DIR / d.name
+        out_dir = args.out / d.name
         out_dir.mkdir(parents=True, exist_ok=True)
         for raw in json.loads((d / "filings.json").read_text(encoding="utf-8")):
             filing = Filing.model_validate(raw)

@@ -110,3 +110,60 @@ def test_split_sections_replaces_stub_item_with_title():
     )
     sections = {s: b for s, _, b in split_sections(bs, "10-K")}
     assert sections["item_7"][0].text.startswith("Real MD&A")
+
+
+def test_is_body_row_skips_header_and_year_rows():
+    from ingest.parse import is_body_row
+
+    assert not is_body_row("Year Ended")
+    assert not is_body_row("December 27, 2025 | December 28, 2024")
+    assert not is_body_row("(In millions) | 2025 | 2024")
+    assert is_body_row("Net revenue | $34,639 | $25,785")
+    assert is_body_row("Operating loss | ( 2,214 ) | 93")
+
+
+def test_split_table_repeats_all_header_rows():
+    from ingest.parse import table_chunks
+
+    header = ["Year Ended", "December 27, 2025 | December 28, 2024", "(In millions)"]
+    body = [f"Line item number {i} with a longer label | {i},000 | {i},500" for i in range(120)]
+    block = Block("table", "\n".join(header + body), page=3)
+    chunks = table_chunks(block)
+    assert len(chunks) > 1
+    for text, page in chunks:
+        assert text.startswith("\n".join(header))
+        assert count_tokens(text) <= CHUNK_TOKENS
+        assert page == 3
+
+
+def test_context_header_names_company_form_period_and_table():
+    from datetime import date
+
+    from ingest.models import Company, Filing
+    from ingest.parse import context_header
+
+    company = Company(ticker="AMD", name="Advanced Micro Devices", sector="Tech", cik="2488")
+    filing = Filing(
+        ticker="AMD",
+        cik="2488",
+        form_type="10-Q",
+        accession_number="a",
+        filing_date=date(2026, 5, 1),
+        period_of_report=date(2026, 3, 28),
+        fiscal_year=2026,
+        fiscal_period="Q1",
+        document_name="d.htm",
+        source_url="https://x",
+        local_path="p",
+    )
+    head = context_header(
+        filing, company, "Financial Statements", "Condensed Statements of Operations"
+    )
+    assert head == (
+        "Advanced Micro Devices (AMD) 10-Q quarterly report, fiscal 2026 Q1. Financial Statements."
+        " Table: Condensed Statements of Operations."
+    )
+    annual = filing.model_copy(update={"form_type": "10-K", "fiscal_period": "FY"})
+    assert "10-K annual report, fiscal 2026. Risk Factors." in context_header(
+        annual, company, "Risk Factors", None
+    )

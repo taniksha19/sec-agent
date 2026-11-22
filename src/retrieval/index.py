@@ -37,18 +37,20 @@ def load_chunks(processed_dir: Path = PROCESSED_DIR) -> list[Chunk]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--recreate", action="store_true", help="Drop the collection first")
+    parser.add_argument("--collection", default=COLLECTION)
+    parser.add_argument("--processed-dir", type=Path, default=PROCESSED_DIR)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
     client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
-    if args.recreate and client.collection_exists(COLLECTION):
-        client.delete_collection(COLLECTION)
+    if args.recreate and client.collection_exists(args.collection):
+        client.delete_collection(args.collection)
 
     embedder = Embedder()
     sparse = SparseEmbedder()
-    store = QdrantStore(client, COLLECTION, embedder.dim)
-    chunks = load_chunks()
+    store = QdrantStore(client, args.collection, embedder.dim)
+    chunks = load_chunks(args.processed_dir)
     log.info("Loaded %d chunks", len(chunks))
 
     start = time.monotonic()
@@ -66,11 +68,11 @@ def main() -> None:
             (len(chunks) - done) / rate / 60,
         )
 
-    count = client.count(COLLECTION).count
+    count = client.count(args.collection).count
     log.info(
         "Done in %.1f min. Collection '%s' has %d points.",
         (time.monotonic() - start) / 60,
-        COLLECTION,
+        args.collection,
         count,
     )
 
