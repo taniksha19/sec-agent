@@ -105,5 +105,19 @@ Template:
   | Old | hybrid + NVIDIA rerank | 0.361 | 0.528 |
   | New | hybrid + NVIDIA rerank | 0.639 | 0.750 |
 
-- **Chosen:** new chunking for the full corpus. Accuracy on the full set is measured after the re-embed.
+- **Full corpus (all 20 companies, 58 answerable golden questions, `--recall-only`; 48,534 chunks):**
+
+  | Retrieval | Old R@1 / @5 / @10 | New R@1 / @5 / @10 |
+  | --- | --- | --- |
+  | vector | 0.190 / 0.478 / 0.599 | 0.362 / 0.543 / 0.703 |
+  | hybrid | 0.198 / 0.513 / 0.612 | 0.397 / 0.586 / 0.716 |
+  | hybrid + NVIDIA rerank (50) | 0.582 / 0.780 / 0.780 | 0.728 / 0.841 / 0.858 |
+
+- **Chosen:** new chunking. Accuracy on the full set waits for the judge quota to reset.
 - **Judge quota:** Gemini 3.5 Flash-Lite's free tier is 500 requests/day (hit during this experiment; each question now costs 2 judge calls with faithfulness). Added `--recall-only` to `make eval` for retrieval experiments that need no LLM.
+
+## 2026-11-22: Chunks flagged by NVIDIA's content-safety screen sink to the bottom
+- **Problem:** after the re-chunk, the hosted reranker returned 422 "input rejected by content safety screening" for one golden question. Two ordinary Chevron 10-Q income-tax paragraphs trip it, with or without the context header, every time. One flagged passage rejects the whole 50-passage request.
+- **Options:** sink flagged chunks to the bottom; drop them; skip reranking for that question.
+- **Chosen:** sink. On that 422 the reranker halves the batch until each flagged passage is alone (about 12 extra calls for one flag in 50, instead of 50). Flagged passages get a fixed score of -1e9 (cached) and a log line with the text's hash. A chunk the reranker refused to score can never outrank one it scored, and the question keeps the rerank gain for the other 48 chunks.
+- **Guards (from security review):** the error is matched on the API's exact message, not a substring, because 422 bodies can echo untrusted chunk text. If the question itself is flagged, the reranker raises instead of caching -1e9 for every passage. Flagged chunks can still fill the top-k when few chunks were scored, so the Phase 4 sanitizer must cover them like any other retrieved text.

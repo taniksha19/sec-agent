@@ -8,6 +8,7 @@ and eval reruns ask the same questions.
 
 import hashlib
 import json
+import logging
 import math
 import os
 import time
@@ -34,6 +35,29 @@ CANDIDATES = 50
 
 RETRIES = 4
 RETRY_STATUS = {429, 500, 502, 503, 504}
+
+# NVIDIA's content-safety screen rejects a whole request if any passage trips it, and it flags
+# ordinary filing text (e.g. Chevron income-tax MD&A). Flagged passages get this score so they
+# sink to the bottom: a chunk we couldn't score must never outrank one we could.
+FLAGGED_SCORE = -1e9
+SAFETY_REJECTION = "input rejected by content safety screening"
+
+
+log = logging.getLogger(__name__)
+
+
+class ContentFlagged(Exception):
+    """The hosted reranker refused the request on content-safety grounds."""
+
+
+def error_message(resp: httpx.Response) -> str | None:
+    """The API's own error message. Matched exactly, because 422 bodies can echo our input back,
+    and the input (a filing chunk) is untrusted."""
+    try:
+        error = resp.json().get("error")
+    except (ValueError, AttributeError):
+        return None
+    return error.get("message") if isinstance(error, dict) else None
 
 
 def parse_rankings(data: dict, n: int) -> list[float]:
@@ -96,6 +120,34 @@ class Reranker:
         return [cached[key] for key in keys]
 
     def _hosted(self, question: str, texts: list[str]) -> list[float]:
+        try:
+            return self._post(question, texts)
+        except ContentFlagged:
+            # If the question itself is flagged, every passage would be; fail loudly instead of
+            # caching a fake score for all of them.
+            try:
+                self._post(question, ["."])
+            except ContentFlagged:
+                raise RuntimeError("rerank: the question was flagged by content safety") from None
+            return self._split(question, texts)
+
+    def _split(self, question: str, rejected: list[str]) -> list[float]:
+        """Halve a rejected batch until the flagged passages are alone (~2 log2 n extra calls
+        per flagged passage, not n)."""
+        if len(rejected) == 1:
+            digest = hashlib.sha256(rejected[0].encode()).hexdigest()[:12]
+            log.warning("rerank: passage %s flagged by content safety, sunk to bottom", digest)
+            return [FLAGGED_SCORE]
+        mid = len(rejected) // 2
+        scores = []
+        for half in (rejected[:mid], rejected[mid:]):
+            try:
+                scores += self._post(question, half)
+            except ContentFlagged:
+                scores += self._split(question, half)
+        return scores
+
+    def _post(self, question: str, texts: list[str]) -> list[float]:
         body = {
             "model": self.model_name,
             "query": {"text": question},
@@ -115,6 +167,8 @@ class Reranker:
                 break
             # Free tier rate limit or a cold start.
             time.sleep(min(float(resp.headers.get("Retry-After", 2**attempt)), 30))
+        if resp.status_code == 422 and error_message(resp) == SAFETY_REJECTION:
+            raise ContentFlagged
         resp.raise_for_status()
         return parse_rankings(resp.json(), len(texts))
 
