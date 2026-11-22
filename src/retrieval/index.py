@@ -1,8 +1,9 @@
-"""Embed all processed chunks and load them into Qdrant.
+"""Embed all processed chunks (dense + BM25) and load them into Qdrant.
 
 Usage: uv run python -m retrieval.index [--recreate]
 
-Embeddings are cached on disk, so re-running only embeds new or changed chunks.
+Dense embeddings are cached on disk, so re-running only embeds new or changed chunks.
+BM25 vectors are cheap and recomputed every run.
 """
 
 import argparse
@@ -16,6 +17,7 @@ from qdrant_client import QdrantClient
 from ingest.models import Chunk
 from retrieval.embeddings import Embedder
 from retrieval.qdrant_store import QdrantStore
+from retrieval.sparse import SparseEmbedder
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +46,7 @@ def main() -> None:
         client.delete_collection(COLLECTION)
 
     embedder = Embedder()
+    sparse = SparseEmbedder()
     store = QdrantStore(client, COLLECTION, embedder.dim)
     chunks = load_chunks()
     log.info("Loaded %d chunks", len(chunks))
@@ -51,7 +54,8 @@ def main() -> None:
     start = time.monotonic()
     for i in range(0, len(chunks), BATCH):
         batch = chunks[i : i + BATCH]
-        store.upsert(batch, embedder.embed_documents([c.text for c in batch]))
+        texts = [c.text for c in batch]
+        store.upsert(batch, embedder.embed_documents(texts), sparse.embed_documents(texts))
         done = i + len(batch)
         rate = done / (time.monotonic() - start)
         log.info(

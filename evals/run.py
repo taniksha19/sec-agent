@@ -1,6 +1,6 @@
 """Run the golden set through the baseline and score retrieval and answers.
 
-Usage: uv run python -m evals.run [--limit N] [--save-baseline]
+Usage: uv run python -m evals.run [--retrieval vector|hybrid] [--limit N] [--save-baseline]
 
 Recall@k: share of a question's gold sources found in the top-k retrieved chunks. A chunk finds a
 source if it is from the same company and contains the source's match strings (the figures from
@@ -39,8 +39,10 @@ JUDGE_MODEL = "gemini-3.5-flash-lite"
 JUDGE_PROMPT = """You grade answers to questions about SEC filings against a reference answer.
 Reply with JSON only: {"correct": true or false, "reason": "<one sentence>"}
 
-The reference answer is ground truth, taken from the filings. Do not use your own knowledge of
-dates or facts: a period that seems to be in the future to you is still valid.
+The reference answer is ground truth, taken from the filings. The filings run through November
+2026, so every fiscal period in these questions (including fiscal 2026 and 2027 quarters) has
+already been reported. Never mark an answer wrong because a date seems to be in the future, and do
+not use your own knowledge of dates or facts.
 
 Mark correct only if the answer gives the same facts as the reference:
 - Numbers must match the reference up to rounding and units (e.g. $45,765 million = $45.8 billion).
@@ -149,12 +151,13 @@ def summarize(rows: list[dict]) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--retrieval", choices=["vector", "hybrid"], default="vector")
     parser.add_argument("--limit", type=int, help="Only run the first N questions")
     parser.add_argument("--save-baseline", action="store_true", help="Write evals/baseline.json")
     args = parser.parse_args()
     load_dotenv()
 
-    rag = from_env()
+    rag = from_env(args.retrieval)
     rag.llm = CachedLLM(rag.llm, CACHE_DIR)
     judge_llm = CachedLLM(
         # Free tier allows ~15 requests/min; a burst of 20 got 429s even with SDK retries.
@@ -166,7 +169,7 @@ def main() -> None:
     rows = []
     start = time.monotonic()
     for i, q in enumerate(golden, 1):
-        results = rag.store.search(rag.embedder.embed_query(q["question"]), max(KS))
+        results = rag.retrieve(q["question"], max(KS))
         chunks = [r.chunk for r in results]
         ans = rag.generate(q["question"], results[:TOP_K])
 
@@ -200,6 +203,7 @@ def main() -> None:
     summary = summarize(rows)
     summary.update(
         {
+            "retrieval": rag.retrieval,
             "answer_model": rag.llm.model,
             "judge_model": JUDGE_MODEL,
             "top_k": TOP_K,
@@ -211,7 +215,7 @@ def main() -> None:
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    out = RESULTS_DIR / f"run-{stamp}.json"
+    out = RESULTS_DIR / f"run-{stamp}-{rag.retrieval}.json"
     out.write_text(json.dumps({"summary": summary, "rows": rows}, indent=2), encoding="utf-8")
     if args.save_baseline:
         BASELINE.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")

@@ -3,6 +3,7 @@
 Usage: uv run python -m agent.baseline "How much did Apple spend on R&D in fiscal 2026?"
 
 No filters, no reranking, no prompt hardening: this is the number later phases must beat.
+Retrieval is dense-only, or hybrid (dense + BM25, rank fusion) when given a sparse embedder.
 """
 
 import os
@@ -17,6 +18,7 @@ from llm_gateway.client import NO_THINKING, LLMClient
 from retrieval.base import SearchResult, VectorStore
 from retrieval.embeddings import Embedder
 from retrieval.qdrant_store import QdrantStore
+from retrieval.sparse import SparseEmbedder
 
 TOP_K = 5
 COLLECTION = "filings"
@@ -66,11 +68,27 @@ def parse_citations(text: str, n_sources: int) -> list[int]:
 
 
 class BaselineRAG:
-    def __init__(self, store: VectorStore, embedder: Embedder, llm: LLMClient, k: int = TOP_K):
+    def __init__(
+        self,
+        store: VectorStore,
+        embedder: Embedder,
+        llm: LLMClient,
+        k: int = TOP_K,
+        sparse: SparseEmbedder | None = None,
+    ):
         self.store, self.embedder, self.llm, self.k = store, embedder, llm, k
+        self.sparse = sparse
 
-    def retrieve(self, question: str) -> list[SearchResult]:
-        return self.store.search(self.embedder.embed_query(question), self.k)
+    @property
+    def retrieval(self) -> str:
+        return "hybrid" if self.sparse else "vector"
+
+    def retrieve(self, question: str, k: int | None = None) -> list[SearchResult]:
+        k = k or self.k
+        dense = self.embedder.embed_query(question)
+        if self.sparse is None:
+            return self.store.search(dense, k)
+        return self.store.hybrid_search(dense, self.sparse.embed_query(question), k)
 
     def answer(self, question: str) -> Answer:
         return self.generate(question, self.retrieve(question))
@@ -87,12 +105,14 @@ class BaselineRAG:
         )
 
 
-def from_env() -> BaselineRAG:
+def from_env(retrieval: str = "vector") -> BaselineRAG:
     load_dotenv()
     embedder = Embedder()
     client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
     llm = LLMClient(extra_body=NO_THINKING)
-    return BaselineRAG(QdrantStore(client, COLLECTION, embedder.dim), embedder, llm)
+    sparse = SparseEmbedder() if retrieval == "hybrid" else None
+    store = QdrantStore(client, COLLECTION, embedder.dim)
+    return BaselineRAG(store, embedder, llm, sparse=sparse)
 
 
 def main() -> None:

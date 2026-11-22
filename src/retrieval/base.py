@@ -19,15 +19,38 @@ class SearchResult(BaseModel):
     score: float
 
 
+class SparseVector(BaseModel):
+    """Keyword (BM25) term weights: token ids and their weights."""
+
+    indices: list[int]
+    values: list[float]
+
+
 class VectorStore(Protocol):
-    def upsert(self, chunks: list[Chunk], vectors: list[list[float]]) -> None:
-        """Insert or replace chunks by chunk_id. vectors[i] is the embedding of chunks[i]."""
+    def upsert(
+        self,
+        chunks: list[Chunk],
+        vectors: list[list[float]],
+        sparse_vectors: list[SparseVector] | None = None,
+    ) -> None:
+        """Insert or replace chunks by chunk_id. vectors[i] is the embedding of chunks[i];
+        sparse_vectors[i], if given, is its keyword vector for hybrid search."""
         ...
 
     def search(
         self, query_vector: list[float], k: int, filters: Filters | None = None
     ) -> list[SearchResult]:
-        """Return the top-k chunks by similarity, highest score first."""
+        """Return the top-k chunks by dense similarity, highest score first."""
+        ...
+
+    def hybrid_search(
+        self,
+        query_vector: list[float],
+        query_sparse: SparseVector,
+        k: int,
+        filters: Filters | None = None,
+    ) -> list[SearchResult]:
+        """Return the top-k chunks from dense and keyword search merged by rank fusion."""
         ...
 
     def delete(self, ids: list[str]) -> None:
