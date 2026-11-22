@@ -7,6 +7,8 @@
 data/raw/*
 !data/raw/.gitkeep
 data/cache/
+# Parsed chunks: rebuilt by `uv run python -m ingest.parse`, and re-chunked in Phase 2
+data/processed/
 
 # Python
 __pycache__/
