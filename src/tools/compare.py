@@ -4,10 +4,11 @@ from tools.models import CompanyChange, CompareInput, CompareOutput
 
 
 def compare(inp: CompareInput) -> CompareOutput:
+    by_company: dict[str, dict[int, float]] = {}
+    for point in inp.values:
+        by_company.setdefault(point.ticker, {})[point.fiscal_year] = point.value
     changes = []
-    for ticker, by_year in inp.values.items():
-        if not by_year:
-            continue
+    for ticker, by_year in by_company.items():
         first, last = min(by_year), max(by_year)
         a, b = by_year[first], by_year[last]
         pct = round((b - a) / abs(a) * 100, 2) if a else None

@@ -400,6 +400,45 @@ def table_chunks(block: Block) -> list[tuple[str, int]]:
 
 # Short text right above a table is usually its title ("Consolidated Statements of Operations").
 CAPTION_CHARS = 150
+# Otherwise the last sentence above it usually says what it is ("...stock-based compensation
+# expense ... as follows:"), and the nearest short heading names the note it belongs to.
+SENTENCE_CHARS = 200
+HEADING_CHARS = 80
+SENTENCE_END_RE = re.compile(r"(?<=[.;:])\s+(?=[A-Z(])")
+# Page furniture that sits between text and tables: page numbers, footers, running headers.
+PAGE_JUNK_RE = re.compile(
+    r"^(\d+|\(continued\)|table of contents|.*\bform 10-[kq](\s+\d+)?|notes to (the )?consolidated"
+    r" financial statements(\s*\(continued\))?)\.?$",
+    re.IGNORECASE,
+)
+
+
+def table_caption(run: list[Block]) -> str | None:
+    """Title for a table from the text blocks right above it. Without one, 32% of table chunks
+    were bare rows: NVIDIA's stock-compensation table has a 'Research and development' row
+    ($3,423M) that the agent took for total R&D ($12,914M)."""
+    run = [b for b in run if not PAGE_JUNK_RE.match(b.text.strip())]
+    if not run:
+        return None
+    last = run[-1].text.strip()
+    if len(last) <= CAPTION_CHARS:
+        caption = last
+    else:
+        sentence = SENTENCE_END_RE.split(last)[-1].strip()
+        caption = sentence if len(sentence) <= SENTENCE_CHARS else None
+    heading = next(
+        (
+            b.text.strip()
+            for b in reversed(run[:-1])
+            if len(b.text.strip()) <= HEADING_CHARS and not b.text.strip().endswith(".")
+        ),
+        None,
+    )
+    if heading and caption:
+        return f"{heading}. {caption}"
+    return caption or heading
+
+
 FORM_KINDS = {"10-K": "annual report", "10-Q": "quarterly report", "8-K": "earnings release"}
 
 
@@ -415,7 +454,7 @@ def context_header(filing: Filing, company: Company, section: str, caption: str 
         period = f"period ended {filing.period_of_report}"
     kind = FORM_KINDS[filing.form_type]
     header = f"{company.name} ({filing.ticker}) {filing.form_type} {kind}, {period}. {section}."
-    return f"{header} Table: {caption}." if caption else header
+    return f"{header} Table: {caption.rstrip('.')}." if caption else header
 
 
 def chunk_filing(filing: Filing, company: Company) -> tuple[list[Chunk], list[str]]:
@@ -430,7 +469,7 @@ def chunk_filing(filing: Filing, company: Company) -> tuple[list[Chunk], list[st
             if block is not None and block.kind == "text":
                 run.append(block)
                 continue
-            caption = run[-1].text if run and len(run[-1].text) <= CAPTION_CHARS else None
+            caption = table_caption(run)
             pieces += [(t, pg, False, None) for t, pg in pack(text_units(run))]
             run = []
             if block is not None:

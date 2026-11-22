@@ -60,12 +60,10 @@ def test_calculate_rejects_anything_but_arithmetic(expression):
 
 
 def test_compare_ranks_by_growth_from_first_to_last_year():
-    out = compare(
-        CompareInput(
-            metric="R&D",
-            values={"AMD": {2023: 5872, 2025: 8091, 2024: 6456}, "X": {2024: 0, 2025: 5}},
-        )
-    )
+    points = [("AMD", 2023, 5872), ("AMD", 2025, 8091), ("AMD", 2024, 6456)]
+    points += [("X", 2024, 0), ("X", 2025, 5)]
+    values = [{"ticker": t, "fiscal_year": y, "value": v} for t, y, v in points]
+    out = compare(CompareInput(metric="R&D", values=values))
     amd, x = out.changes
     assert (amd.ticker, amd.first_year, amd.last_year) == ("AMD", 2023, 2025)
     assert amd.change_pct == pytest.approx(37.79, abs=0.01)

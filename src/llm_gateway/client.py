@@ -6,7 +6,7 @@ Configured from .env: LLM_BASE_URL, LLM_API_KEY, LLM_MODEL. Phase 5 adds routing
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from openai import OpenAI
 
@@ -25,6 +25,8 @@ class LLMResponse:
     model: str
     input_tokens: int
     output_tokens: int
+    # Tool calls the model asked for: [{"id", "name", "arguments" (a JSON string)}]
+    tool_calls: list[dict] = field(default_factory=list)
 
 
 class LLMClient:
@@ -49,22 +51,36 @@ class LLMClient:
         )
 
     def chat(self, system: str, user: str, max_tokens: int = 800) -> LLMResponse:
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        return self.complete(messages, max_tokens=max_tokens)
+
+    def complete(
+        self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int = 800
+    ) -> LLMResponse:
+        """One chat turn over a full message list, optionally offering OpenAI-format tools."""
         wait = self._last_call + self.min_interval - time.monotonic()
         if wait > 0:
             time.sleep(wait)
         self._last_call = time.monotonic()
         resp = self._client.chat.completions.create(
             model=self.model,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            messages=messages,
             temperature=0,  # reproducible answers for evals
             max_tokens=max_tokens,
             extra_body=self.extra_body,
+            **({"tools": tools} if tools else {}),
         )
-        text = THINK_RE.sub("", resp.choices[0].message.content or "").strip()
+        message = resp.choices[0].message
+        text = THINK_RE.sub("", message.content or "").strip()
+        calls = [
+            {"id": c.id, "name": c.function.name, "arguments": c.function.arguments}
+            for c in message.tool_calls or []
+        ]
         usage = resp.usage
         return LLMResponse(
             text=text,
             model=self.model,
             input_tokens=usage.prompt_tokens if usage else 0,
             output_tokens=usage.completion_tokens if usage else 0,
+            tool_calls=calls,
         )

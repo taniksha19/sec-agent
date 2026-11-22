@@ -66,10 +66,20 @@ class CalculateOutput(BaseModel):
     value: float
 
 
+class DataPoint(BaseModel):
+    ticker: str
+    fiscal_year: int
+    value: float
+
+
 class CompareInput(BaseModel):
     metric: str
-    values: dict[str, dict[int, float]] = Field(
-        description="ticker -> fiscal year -> value, e.g. {'NVDA': {2024: 8675, 2026: 18497}}"
+    # A flat list, not ticker -> year -> value: the model sent the nested form as a string with
+    # unquoted integer keys, which is not JSON.
+    values: list[DataPoint] = Field(
+        min_length=1,
+        description="One item per company and year, e.g. "
+        "[{'ticker': 'NVDA', 'fiscal_year': 2024, 'value': 8675}]",
     )
 
 

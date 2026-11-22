@@ -167,3 +167,40 @@ def test_context_header_names_company_form_period_and_table():
     assert "10-K annual report, fiscal 2026. Risk Factors." in context_header(
         annual, company, "Risk Factors", None
     )
+
+
+def test_table_caption_uses_short_title_or_last_sentence_with_heading():
+    from ingest.parse import table_caption
+
+    def run(*texts):
+        return [Block("text", t, 1) for t in texts]
+
+    assert table_caption(run("Consolidated Statements of Income")) == (
+        "Consolidated Statements of Income"
+    )
+    long_text = (
+        "Stock-based compensation expense is associated with RSUs, PSUs and our ESPP, and is "
+        "recognized over the requisite service period of each award. Consolidated Statements of "
+        "Income include stock-based compensation expense, as follows:"
+    )
+    assert table_caption(run("Note 3 - Stock-Based Compensation", long_text)) == (
+        "Note 3 - Stock-Based Compensation. Consolidated Statements of Income include "
+        "stock-based compensation expense, as follows:"
+    )
+    assert table_caption([]) is None
+
+
+def test_table_caption_skips_page_numbers_footers_and_running_headers():
+    from ingest.parse import table_caption
+
+    blocks = [
+        Block("text", t, 1)
+        for t in [
+            "Deposits",
+            "JPMorgan Chase & Co./2024 Form 10-K 323",
+            "131",
+            "Notes to consolidated financial statements (continued)",
+            "Table of Contents",
+        ]
+    ]
+    assert table_caption(blocks) == "Deposits"

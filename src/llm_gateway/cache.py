@@ -20,22 +20,30 @@ class CachedLLM:
         self.model = llm.model
         self.cache_dir = Path(cache_dir)
 
-    def _path(self, system: str, user: str, max_tokens: int) -> Path:
+    def _path(self, *request) -> Path:
         llm = self.llm
-        key = json.dumps(
-            [llm.base_url, llm.model, llm.extra_body, system, user, max_tokens], sort_keys=True
-        )
+        key = json.dumps([llm.base_url, llm.model, llm.extra_body, *request], sort_keys=True)
         digest = hashlib.sha256(key.encode()).hexdigest()
         return self.cache_dir / digest[:2] / f"{digest}.json"
 
-    def chat(self, system: str, user: str, max_tokens: int = 800) -> LLMResponse:
-        path = self._path(system, user, max_tokens)
+    def _cached(self, path: Path, call) -> LLMResponse:
         if path.exists():
             return LLMResponse(**json.loads(path.read_text(encoding="utf-8")))
-        resp = self.llm.chat(system, user, max_tokens)
-        if resp.text:  # don't pin an empty reply; retry it next run
+        resp = call()
+        if resp.text or resp.tool_calls:  # don't pin an empty reply; retry it next run
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(".tmp")
             tmp.write_text(json.dumps(asdict(resp)), encoding="utf-8")
             os.replace(tmp, path)  # atomic, so an interrupted write can't leave a broken entry
         return resp
+
+    def chat(self, system: str, user: str, max_tokens: int = 800) -> LLMResponse:
+        # Key layout predates complete(); kept so earlier cached replies still hit.
+        path = self._path(system, user, max_tokens)
+        return self._cached(path, lambda: self.llm.chat(system, user, max_tokens))
+
+    def complete(
+        self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int = 800
+    ) -> LLMResponse:
+        path = self._path("complete", messages, tools, max_tokens)
+        return self._cached(path, lambda: self.llm.complete(messages, tools, max_tokens))
