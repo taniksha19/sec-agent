@@ -41,6 +41,7 @@ crash.log
 
 # Load test output
 loadtest/results/
+evals/results/
 
 # Editors / OS
 .vscode/

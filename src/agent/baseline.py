@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 
-from llm_gateway.client import LLMClient
+from llm_gateway.client import NO_THINKING, LLMClient
 from retrieval.base import SearchResult, VectorStore
 from retrieval.embeddings import Embedder
 from retrieval.qdrant_store import QdrantStore
@@ -73,7 +73,9 @@ class BaselineRAG:
         return self.store.search(self.embedder.embed_query(question), self.k)
 
     def answer(self, question: str) -> Answer:
-        results = self.retrieve(question)
+        return self.generate(question, self.retrieve(question))
+
+    def generate(self, question: str, results: list[SearchResult]) -> Answer:
         resp = self.llm.chat(SYSTEM_PROMPT, build_prompt(question, results))
         return Answer(
             question=question,
@@ -89,7 +91,8 @@ def from_env() -> BaselineRAG:
     load_dotenv()
     embedder = Embedder()
     client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
-    return BaselineRAG(QdrantStore(client, COLLECTION, embedder.dim), embedder, LLMClient())
+    llm = LLMClient(extra_body=NO_THINKING)
+    return BaselineRAG(QdrantStore(client, COLLECTION, embedder.dim), embedder, llm)
 
 
 def main() -> None:

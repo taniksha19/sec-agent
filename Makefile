@@ -1,4 +1,4 @@
-.PHONY: install up down download test lint
+.PHONY: install up down download test lint eval
 
 install:
 	uv sync
@@ -16,5 +16,8 @@ test:
 	uv run pytest
 
 lint:
-	uv run ruff check src tests
-	uv run ruff format --check src tests
+	uv run ruff check src tests evals
+	uv run ruff format --check src tests evals
+
+eval:
+	uv run python -m evals.run

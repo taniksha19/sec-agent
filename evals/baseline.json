@@ -1,0 +1,45 @@
+{
+  "n": 66,
+  "recall": {
+    "@1": 0.19,
+    "@5": 0.478,
+    "@10": 0.616
+  },
+  "accuracy": 0.545,
+  "accuracy_answerable": 0.483,
+  "refused_answerable": 0.431,
+  "by_type": {
+    "fact": {
+      "n": 23,
+      "accuracy": 0.609,
+      "recall@5": 0.609
+    },
+    "multi_hop": {
+      "n": 9,
+      "accuracy": 0.0,
+      "recall@5": 0.139
+    },
+    "narrative": {
+      "n": 8,
+      "accuracy": 0.75,
+      "recall@5": 0.562
+    },
+    "table": {
+      "n": 18,
+      "accuracy": 0.444,
+      "recall@5": 0.444
+    },
+    "unanswerable": {
+      "n": 8,
+      "accuracy": 1.0
+    }
+  },
+  "avg_input_tokens": 1693,
+  "avg_output_tokens": 32,
+  "answer_model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "judge_model": "gemini-3.5-flash-lite",
+  "top_k": 5,
+  "golden_file": "questions.jsonl",
+  "run_at": "2026-11-22T02:07:05+00:00",
+  "wall_seconds": 264
+}
