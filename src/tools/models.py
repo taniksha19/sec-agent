@@ -58,7 +58,7 @@ class LookupTableOutput(BaseModel):
 
 class CalculateInput(BaseModel):
     expression: str = Field(
-        min_length=1, max_length=200, description="Arithmetic only: numbers, + - * / ( ) and %"
+        min_length=1, max_length=200, description="Arithmetic only: numbers, + - * / ( )"
     )
 
 

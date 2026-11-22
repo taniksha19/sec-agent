@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 
 from llm_gateway.client import NO_THINKING, LLMClient
-from retrieval.base import SearchResult, VectorStore
+from retrieval.base import Filters, SearchResult, VectorStore
 from retrieval.embeddings import Embedder
 from retrieval.qdrant_store import QdrantStore
 from retrieval.rerank import CANDIDATES, Reranker
@@ -87,14 +87,17 @@ class BaselineRAG:
         name = "hybrid" if self.sparse else "vector"
         return f"{name}+{self.reranker.name}" if self.reranker else name
 
-    def retrieve(self, question: str, k: int | None = None) -> list[SearchResult]:
+    def retrieve(
+        self, question: str, k: int | None = None, filters: Filters | None = None
+    ) -> list[SearchResult]:
         k = k or self.k
         n = max(k, self.candidates) if self.reranker else k
         dense = self.embedder.embed_query(question)
         if self.sparse is None:
-            results = self.store.search(dense, n)
+            results = self.store.search(dense, n, filters)
         else:
-            results = self.store.hybrid_search(dense, self.sparse.embed_query(question), n)
+            sparse = self.sparse.embed_query(question)
+            results = self.store.hybrid_search(dense, sparse, n, filters)
         return self.reranker.rerank(question, results, k) if self.reranker else results
 
     def answer(self, question: str) -> Answer:
