@@ -99,12 +99,14 @@ docs/             architecture.md, decisions.md, results.md
 
 Add each command here as it starts working.
 
-- `make up` / `make down`: start/stop the local stack (`docker compose`). Qdrant on :6333 (REST), :6334 (gRPC); API on 127.0.0.1:8000 (`docker compose build api` after code changes)
+- `make up` / `make down`: start/stop the local stack (`docker compose`). Qdrant on :6333 (REST), :6334 (gRPC); Go gateway on 127.0.0.1:8080 in front of the API (`docker compose up -d --build` after code changes)
 - `make download`: fetch filings from EDGAR into `data/raw/` (needs `SEC_USER_AGENT` in `.env`; add `--tickers AAPL` via `uv run python -m ingest.download --tickers AAPL`)
 - `make eval`: golden set through vector, hybrid and hybrid+NVIDIA rerank (`--all`), one table of recall@1/5/10, judged accuracy, faithfulness, refusals. Needs Qdrant up, `LLM_*`, `NVIDIA_API_KEY` and `GEMINI_API_KEY` in `.env`. LLM replies and rerank scores cached in `data/cache/`. Single setup: `uv run python -m evals.run --retrieval hybrid --rerank nvidia`; `--recall-only` skips all LLM calls; `--save-baseline` writes `evals/baseline.json`; `--limit N` for a quick run
 - `uv run python -m agent.baseline "question"`: one cited answer from the CLI
 - `uv run python -m agent.graph "question"`: Phase 3 agent (plan, corrective retrieval, tools) from the CLI; `--agent` on `evals.run` evaluates it
 - `make api`: FastAPI on :8000 outside Docker, for development. `POST /v1/ask {"question": ...}`, `GET /healthz`
+- Gateway: `curl -X POST localhost:8080/v1/ask -H "Authorization: Bearer <key from GATEWAY_API_KEYS>" -d '{"question": ...}'`; 401 bad key, 429 over `RATE_LIMIT_PER_MINUTE`
+- `make test-gateway`: gofmt, vet and Go tests in the golang Docker image (Go not installed locally)
 - `make test`: unit tests (`uv run pytest`)
 - `make lint`: ruff check + format check
 - `make loadtest`: load test (Phase 6)

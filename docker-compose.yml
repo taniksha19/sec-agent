@@ -19,11 +19,21 @@ services:
       LLM_API_KEY: ${LLM_API_KEY}
       LLM_MODEL: ${LLM_MODEL}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY}
-    ports:
-      # Localhost only: auth and rate limits arrive with the Go gateway.
-      - "127.0.0.1:8000:8000"
+    # No host port: reached only through the gateway. `make api` runs it directly for development.
     depends_on:
       - qdrant
+
+  gateway:
+    build: ./gateway
+    environment:
+      GATEWAY_API_KEYS: ${GATEWAY_API_KEYS}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-10}
+      UPSTREAM_URL: http://api:8000
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      api:
+        condition: service_healthy # the agent loads models at startup
 
 volumes:
   qdrant_data:

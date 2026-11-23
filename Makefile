@@ -1,4 +1,4 @@
-.PHONY: install up down download test lint eval api
+.PHONY: install up down download test test-gateway lint eval api
 
 install:
 	uv sync
@@ -14,6 +14,10 @@ download:
 
 test:
 	uv run pytest
+
+# Go isn't needed locally: format check, vet and test inside the Go image.
+test-gateway:
+	docker run --rm -v "$(CURDIR)/gateway:/src" -w /src golang:1.26.11-alpine sh check.sh
 
 lint:
 	uv run ruff check src tests evals

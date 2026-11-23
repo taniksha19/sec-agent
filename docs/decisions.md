@@ -158,3 +158,11 @@ Template:
 ## 2026-11-22: API container and local exposure
 - `docker compose up` now runs the API next to Qdrant. Security review fixes: Qdrant and the API publish on 127.0.0.1 only (Qdrant has no API key, so anyone who can reach it can plant chunks); the API container gets only the 5 variables it reads, not all of `.env`; code and packages are root-owned and only `data/cache` is writable; a Host-header allowlist blocks DNS rebinding; `/docs` and `/openapi.json` are off; `.dockerignore` is an allowlist.
 - **Deferred:** pin base images and embedding-model revisions by digest (Phase 6 CI); resource limits and rate limits (Go gateway).
+
+## 2026-11-22: Go API gateway
+- **Chosen:** a small Go service on the Go standard library only (no third-party modules to vet or pin). It allows only `POST /v1/ask` (plus its own `/healthz`), checks `Authorization: Bearer <key>` against SHA-256 hashes of `GATEWAY_API_KEYS` in constant time, rate-limits each key with a token bucket (`RATE_LIMIT_PER_MINUTE`, default 10), caps bodies at 16 KB, times out the agent after 120 s, strips the key before forwarding, and logs one JSON line per request (request id, 8-hex key id, status, latency; never the key).
+- **Why 10 per minute:** one question costs about 5-7 LLM calls plus a rerank call, so the limit protects the hosted-API quota rather than the server.
+- The API container no longer publishes a host port, so the gateway is the only way in. The gateway image is a static binary on distroless (no shell, non-root).
+- **Checked live:** no key and wrong key -> 401, `/docs` -> 404, the 11th request in a minute -> 429, a real question -> 200 with a cited answer.
+- **Security review fixes:** keys shorter than 32 characters stop startup; at most 2 agent runs in flight per key (a run keeps spending LLM calls even if the client disconnects); 5 s connect timeout; client-sent `Forwarded`/`X-Real-IP` dropped and `X-Forwarded-For` set to the real address, which is also logged; the backend's `Server` header hidden; `bearer` accepted in any case. No limiter on failed attempts: with long random keys guessing is hopeless, and a shared failure limit would let anyone lock out real users.
+- **Not done:** limits are in memory, per gateway replica; Phase 6 with more replicas needs a shared store or limits at the ingress.

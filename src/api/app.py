@@ -4,7 +4,8 @@ Run: uv run uvicorn api.app:app --port 8000
 Then: curl -X POST localhost:8000/v1/ask -H "Content-Type: application/json" \\
         -d '{"question": "How much did AMD spend on R&D in 2025?"}'
 
-Auth, rate limits and request logging live in the Go gateway in front of this service.
+Auth, rate limits and request logging live in the Go gateway (gateway/) in front of this service;
+in docker compose this API has no host port.
 """
 
 import logging
