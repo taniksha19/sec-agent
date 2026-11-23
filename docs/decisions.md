@@ -173,3 +173,10 @@ Template:
 - **Security review fixes:** both filing tools say in their own descriptions (which clients show the model, unlike server instructions) that returned text is untrusted, and are marked open-world; at most 20 filing calls per minute, since each is a paid rerank request; input limits are in the published schema, and bad input or unknown tickers return a readable tool error before any retrieval; calculate and compare reject results that overflow to inf/NaN (this also protects the agent); the filings server loads only `NVIDIA_API_KEY` and `QDRANT_URL` from `.env` and builds no LLM client.
 - **Phase 4:** sanitize in one place on the retrieve path (shared by the agent and the MCP servers), so MCP can't bypass it.
 - **Checked live over stdio:** lookup_table found NVIDIA's FY2025 R&D row ($12,914M vs $8,675M) as the top row; search_filings returned NVIDIA risk-factor chunks with source URLs.
+
+## 2026-11-23: Phase 3 agent eval
+- **Measured (66 questions, same chunks and judge):** hybrid + NVIDIA rerank without the agent 0.864 accuracy; the agent 0.939. Multi-hop went from 0.444 to 0.889, refusals on answerable questions from 0.121 to 0.017. Faithfulness fell from 1.000 to 0.930. Per question the agent uses about 4x the LLM calls and input tokens, with p50 41.5 s, p95 90.5 s.
+- **Still wrong (4):** fact-12 refused (no agent answered it); table-02 gives the filing's rounded 10% instead of computing 9.6%; table-12 divides by net sales instead of total revenue; multi_hop-05 used `calculate` but on the rounded $15.8B from text instead of the exact table figure.
+- **Unfaithful but correct (4):** three narrative answers attach the wrong [n] to one claim among many; one states a computed difference with no citation for the arithmetic. Candidates for the answer prompt: cite per sentence, cite the source of each operand next to a calculated number.
+- **Kept:** the agent. The accuracy gain is concentrated where Phase 2 failed (two-company questions), and no unanswerable question was answered.
+- **Open:** where the latency goes. Phase 4 Langfuse tracing gives per-call timing; until then the p50/p95 above are the measured numbers.

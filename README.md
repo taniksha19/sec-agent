@@ -13,11 +13,13 @@ A production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings
 | Phase 1 baseline: vector top-5 | 0.190 / 0.478 / 0.616 | 0.545 | | 0.431 |
 | Vector, contextual chunk headers | 0.362 / 0.543 / 0.703 | 0.621 | 0.919 | 0.362 |
 | Hybrid (dense + BM25, RRF) | 0.388 / 0.586 / 0.716 | 0.621 | 0.946 | 0.362 |
-| **Hybrid + NVIDIA rerank of 50** | **0.728 / 0.841 / 0.858** | **0.833** | **1.000** | **0.138** |
+| Hybrid + NVIDIA rerank of 50 | 0.728 / 0.841 / 0.858 | 0.833 | 1.000 | 0.138 |
+| Same, new table captions | 0.694 / 0.849 / 0.875 | 0.864 | 1.000 | 0.121 |
+| **Phase 3 agent (plan, corrective retrieval, tools)** | **0.703 / 0.853 / 0.957** | **0.939** | **0.930** | **0.017** |
 
 - Biggest gains are on table questions (accuracy 0.444 in Phase 1, 0.833 now) and multi-hop (0.000 to 0.333).
 - No invented answers: all 8 unanswerable questions are refused in every setup.
-- 8 of the 11 remaining failures are retrieval misses that end in a refusal, mostly two-company questions. Phase 3 targets these with a corrective retrieval loop.
+- The Phase 3 agent splits two-company questions and retries weak retrievals: multi-hop accuracy 0.444 to 0.889. It costs about 4 LLM calls per question (p50 41.5 s, p95 90.5 s on the NVIDIA free tier), and faithfulness drops to 0.930 from citation slips on long answers.
 
 All numbers, with how each was measured, are in [docs/results.md](docs/results.md).
 
