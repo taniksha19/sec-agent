@@ -2,6 +2,7 @@
 numbers and + - * / ( ) can run: never eval(), because arguments may echo retrieved text."""
 
 import ast
+import math
 import operator
 import re
 
@@ -37,6 +38,9 @@ def calculate(inp: CalculateInput) -> CalculateOutput:
     except SyntaxError as e:
         raise ValueError(f"not an arithmetic expression: {inp.expression!r}") from e
     try:
-        return CalculateOutput(value=_eval(tree))
+        value = _eval(tree)
     except ZeroDivisionError as e:
         raise ValueError("division by zero") from e
+    if not math.isfinite(value):  # e.g. 1e308 * 10; JSON has no inf or NaN
+        raise ValueError("result out of range")
+    return CalculateOutput(value=value)

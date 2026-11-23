@@ -63,7 +63,7 @@ class CalculateInput(BaseModel):
 
 
 class CalculateOutput(BaseModel):
-    value: float
+    value: float = Field(allow_inf_nan=False)
 
 
 class DataPoint(BaseModel):
@@ -90,7 +90,9 @@ class CompanyChange(BaseModel):
     last_year: int
     first_value: float
     last_value: float
-    change_pct: float | None = Field(description="None when the first value is 0")
+    change_pct: float | None = Field(
+        allow_inf_nan=False, description="None when the first value is 0"
+    )
 
 
 class CompareOutput(BaseModel):

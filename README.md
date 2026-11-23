@@ -40,6 +40,24 @@ make eval                                # vector, hybrid, hybrid+rerank: recall
 make test
 ```
 
+### Tools over MCP
+
+The agent's tools are also two MCP servers (stdio), so any MCP client can use them:
+
+- `sec-math`: `calculate`, `compare`. Pure functions, no keys or data.
+- `sec-filings`: `search_filings`, `lookup_table` over the indexed filings. Needs Qdrant up and `NVIDIA_API_KEY` in `.env`.
+
+Example client config (Claude Desktop's `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "sec-math": {"command": "uv", "args": ["--directory", "/path/to/sec-agent", "run", "python", "-m", "mcp_servers.math_server"]},
+    "sec-filings": {"command": "uv", "args": ["--directory", "/path/to/sec-agent", "run", "python", "-m", "mcp_servers.filings_server"]}
+  }
+}
+```
+
 ## Docs
 
 - [Architecture](docs/architecture.md)

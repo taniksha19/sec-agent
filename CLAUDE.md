@@ -106,6 +106,7 @@ Add each command here as it starts working.
 - `uv run python -m agent.graph "question"`: Phase 3 agent (plan, corrective retrieval, tools) from the CLI; `--agent` on `evals.run` evaluates it
 - `make api`: FastAPI on :8000 outside Docker, for development. `POST /v1/ask {"question": ...}`, `GET /healthz`
 - Gateway: `curl -X POST localhost:8080/v1/ask -H "Authorization: Bearer <key from GATEWAY_API_KEYS>" -d '{"question": ...}'`; 401 bad key, 429 over `RATE_LIMIT_PER_MINUTE`
+- `uv run python -m mcp_servers.math_server` / `mcp_servers.filings_server`: MCP servers over stdio (client config in README)
 - `make test-gateway`: gofmt, vet and Go tests in the golang Docker image (Go not installed locally)
 - `make test`: unit tests (`uv run pytest`)
 - `make lint`: ruff check + format check
