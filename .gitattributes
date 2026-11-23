@@ -1,0 +1,2 @@
+# Built and checked inside Linux containers: keep LF line endings on every OS.
+gateway/** text eol=lf
