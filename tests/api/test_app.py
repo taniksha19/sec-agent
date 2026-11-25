@@ -96,3 +96,32 @@ def test_rejects_unknown_host_and_hides_docs():
     local = TestClient(create_app(FakeAgent()), base_url="http://localhost")
     assert local.get("/docs").status_code == 404
     assert local.get("/openapi.json").status_code == 404
+
+
+def metric(c, line_start):
+    for line in c.get("/metrics").text.splitlines():
+        if line.startswith(line_start):
+            return float(line.rsplit(" ", 1)[1])
+    return 0.0
+
+
+def test_metrics_count_outcomes_tokens_and_tools():
+    with client(FakeAgent()) as c:
+        answered = metric(c, 'agent_requests_total{outcome="answered"}')
+        tokens = metric(c, 'agent_llm_tokens_total{direction="input"}')
+        calc = metric(c, 'agent_tool_calls_total{ok="true",tool="calculate"}')
+        assert c.post("/v1/ask", json={"question": "AMD R&D 2025?"}).status_code == 200
+        assert metric(c, 'agent_requests_total{outcome="answered"}') == answered + 1
+        assert metric(c, 'agent_llm_tokens_total{direction="input"}') == tokens + 100
+        assert metric(c, 'agent_tool_calls_total{ok="true",tool="calculate"}') == calc + 1
+    with client(FakeAgent(fail=True)) as c:
+        errors = metric(c, 'agent_requests_total{outcome="error"}')
+        assert c.post("/v1/ask", json={"question": "AMD R&D 2025?"}).status_code == 502
+        assert metric(c, 'agent_requests_total{outcome="error"}') == errors + 1
+
+
+def test_unknown_tool_names_share_one_label():
+    from api.metrics import tool_label
+
+    assert tool_label(ToolCall(name="calculate", arguments={}, ok=True)) == "calculate"
+    assert tool_label(ToolCall(name="x" * 50, arguments={}, ok=False)) == "other"

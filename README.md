@@ -34,7 +34,7 @@ Needs Docker, [uv](https://docs.astral.sh/uv/), and API keys in `.env` (copy `.e
 
 ```
 uv sync
-make up                                  # Qdrant, API, and Go gateway on 127.0.0.1:8080
+make up                                  # Qdrant, API, Go gateway on :8080, Prometheus :9090, Grafana :3000
 make download                            # filings from EDGAR into data/raw/
 uv run python -m ingest.parse            # sections and chunks into data/processed/
 uv run python -m retrieval.index         # embed and load into Qdrant (~1.5-2 h on a laptop CPU)

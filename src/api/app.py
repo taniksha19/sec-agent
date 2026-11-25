@@ -10,12 +10,15 @@ in docker compose this API has no host port.
 
 import logging
 import re
+import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from langfuse import propagate_attributes
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from api import metrics
 from api.models import AskRequest, AskResponse, Citation, Usage
 from retrieval.base import SearchResult
 
@@ -86,6 +89,11 @@ def create_app(agent=None) -> FastAPI:
     )
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
+    # Scraped by Prometheus inside docker compose; the gateway's route allowlist excludes it.
+    @app.get("/metrics")
+    def metrics_endpoint() -> Response:
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
     @app.get("/healthz")
     def healthz() -> dict:
         return {"status": "ok"}
@@ -95,6 +103,7 @@ def create_app(agent=None) -> FastAPI:
     def ask(body: AskRequest, request: Request) -> AskResponse:
         request_id = request.headers.get("x-request-id", "")
         metadata = {"request_id": request_id} if REQUEST_ID_RE.fullmatch(request_id) else None
+        start = time.monotonic()
         try:
             # Ties the Langfuse trace to the gateway's log line for the same request.
             with propagate_attributes(trace_name="ask", metadata=metadata):
@@ -103,7 +112,9 @@ def create_app(agent=None) -> FastAPI:
             # Upstream errors (LLM, reranker, Qdrant) may carry URLs or request details: they go
             # to the local log and the Langfuse trace (span status), never to the client.
             log.exception("agent run failed")
+            metrics.record_error(time.monotonic() - start)
             raise HTTPException(502, "The research agent failed upstream.") from None
+        metrics.record(out)
         return to_response(out)
 
     return app
