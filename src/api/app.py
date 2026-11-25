@@ -100,8 +100,8 @@ def create_app(agent=None) -> FastAPI:
             with propagate_attributes(trace_name="ask", metadata=metadata):
                 out = request.app.state.agent.run(body.question)
         except Exception:
-            # Upstream errors (LLM, reranker, Qdrant) may carry URLs or request details;
-            # log them here and return a generic message.
+            # Upstream errors (LLM, reranker, Qdrant) may carry URLs or request details: they go
+            # to the local log and the Langfuse trace (span status), never to the client.
             log.exception("agent run failed")
             raise HTTPException(502, "The research agent failed upstream.") from None
         return to_response(out)

@@ -128,6 +128,13 @@ class BaselineRAG:
         )
 
 
+def disable_tracing_without_keys() -> None:
+    """Langfuse only switches itself off when a key is unset, not when it is empty ("" from a
+    blank .env line or compose's ${VAR:-}); without this, traces would still be sent."""
+    if not (os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY")):
+        os.environ["LANGFUSE_TRACING_ENABLED"] = "false"
+
+
 def make_store(backend: str, collection: str, dim: int) -> VectorStore:
     """Qdrant is the primary backend; Pinecone is only for the Phase 3 comparison."""
     if backend == "pinecone":
@@ -149,6 +156,7 @@ def from_env(
 ) -> BaselineRAG:
     """Defaults are the Phase 2 winner (docs/decisions.md); vector/no rerank is the baseline."""
     load_dotenv()
+    disable_tracing_without_keys()
     embedder = Embedder()
     llm = LLMClient(extra_body=NO_THINKING)
     sparse = SparseEmbedder() if retrieval == "hybrid" else None

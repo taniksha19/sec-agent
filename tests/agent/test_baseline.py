@@ -1,3 +1,4 @@
+import os
 from datetime import date
 
 from agent.baseline import BaselineRAG, build_prompt, parse_citations, source_label
@@ -65,3 +66,18 @@ def test_baseline_answer_wires_retrieval_and_citations():
     assert ans.cited == [1]
     assert ans.sources[0].chunk.ticker == "AAPL"
     assert (ans.input_tokens, ans.output_tokens) == (100, 10)
+
+
+def test_empty_langfuse_keys_turn_tracing_off(monkeypatch):
+    from agent.baseline import disable_tracing_without_keys
+
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-x")
+    disable_tracing_without_keys()
+    assert os.environ["LANGFUSE_TRACING_ENABLED"] == "false"
+
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-x")
+    disable_tracing_without_keys()
+    assert os.environ["LANGFUSE_TRACING_ENABLED"] == "true"
