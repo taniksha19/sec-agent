@@ -2,7 +2,8 @@
 
 Usage: uv run python -m agent.baseline "How much did Apple spend on R&D in fiscal 2026?"
 
-No filters, no reranking, no prompt hardening: this is the number later phases must beat.
+No filters, no reranking, no prompt hardening or chunk cleaning: this is the number later
+phases must beat, kept deliberately unprotected. The agent and the API use src/security/.
 Retrieval is dense-only, or hybrid (dense + BM25, rank fusion) when given a sparse embedder.
 """
 

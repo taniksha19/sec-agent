@@ -54,7 +54,7 @@ class ScriptedLLM:
         self.answer_messages = []
 
     def chat(self, system, user, max_tokens=800):
-        if system == GRADE_PROMPT:
+        if system.startswith(GRADE_PROMPT):
             return reply(json.dumps(self.grades.pop(0)))
         return reply(json.dumps(self.plan))
 

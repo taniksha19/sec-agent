@@ -2,7 +2,7 @@
 
 A production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings releases) that answers financial questions with citations, defends against prompt injection in retrieved documents, and runs on Kubernetes with measured latency, quality, and cost.
 
-> Status: Phases 1 (data and baseline RAG), 2 (better retrieval and evals) and 3 (agent, API, Go gateway, MCP servers, Qdrant vs. Pinecone) done. **Phase 4 (observability and a small prompt-injection defense)** next. See [plan.md](plan.md) for the full build plan.
+> Status: Phases 1 (data and baseline RAG), 2 (better retrieval and evals) 3 (agent, API, Go gateway, MCP servers, Qdrant vs. Pinecone) and 4 (Langfuse tracing, Prometheus + Grafana, prompt-injection defenses) done. **Phase 5 (LLM routing between hosted models)** next. See [plan.md](plan.md) for the full build plan.
 
 ## Results
 
@@ -15,11 +15,14 @@ A production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings
 | Hybrid (dense + BM25, RRF) | 0.388 / 0.586 / 0.716 | 0.621 | 0.946 | 0.362 |
 | Hybrid + NVIDIA rerank of 50 | 0.728 / 0.841 / 0.858 | 0.833 | 1.000 | 0.138 |
 | Same, new table captions | 0.694 / 0.849 / 0.875 | 0.864 | 1.000 | 0.121 |
-| **Phase 3 agent (plan, corrective retrieval, tools)** | **0.703 / 0.853 / 0.957** | **0.939** | **0.930** | **0.017** |
+| Phase 3 agent (plan, corrective retrieval, tools) | 0.703 / 0.853 / 0.957 | 0.939 | 0.930 | 0.017 |
+| **Phase 4: same agent with prompt-injection defenses** | **0.703 / 0.853 / 0.948** | **0.970** | **0.931** | **0.000** |
 
 - Biggest gains are on table questions (accuracy 0.444 in Phase 1, 0.833 now) and multi-hop (0.000 to 0.333).
 - No invented answers: all 8 unanswerable questions are refused in every setup.
-- The Phase 3 agent splits two-company questions and retries weak retrievals: multi-hop accuracy 0.444 to 0.889. It costs about 4 LLM calls per question (p50 41.5 s, p95 90.5 s on the NVIDIA free tier, measured before a ~2 s-per-request local Qdrant delay was fixed; to be re-measured), and faithfulness drops to 0.930 from citation slips on long answers.
+- The Phase 3 agent splits two-company questions and retries weak retrievals: multi-hop accuracy 0.444 to 0.889. It costs about 4 LLM calls per question and faithfulness drops to 0.930 from citation slips on long answers.
+- Latency (Phase 4, from Langfuse traces): p50 13.8 s, p95 48.9 s on the NVIDIA free tier; 92.8% of agent time is hosted-LLM calls, 6.5% rerank, 0.5% vector search.
+- Prompt injection: 31 attacks planted in real retrieved filings. With no defense 5 succeed; with delimiters, chunk cleaning and tool guardrails 3 do (tool misuse 2/6 to 0/6), at no cost to clean accuracy. The model alone already resisted all wrong-figure, prompt-leak and table attacks; the remaining gaps are in [docs/decisions.md](docs/decisions.md).
 - Second backend: Pinecone serverless gives the same recall as Qdrant on the same chunks and fusion (R@5 0.849 with rerank on both); retrieval p95 80-83 ms vs. 46-50 ms for local Qdrant, mostly the network trip to us-east-1.
 
 All numbers, with how each was measured, are in [docs/results.md](docs/results.md).

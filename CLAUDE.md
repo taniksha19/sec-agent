@@ -8,7 +8,7 @@ Production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings r
 
 ## Current status
 
-- **Current phase:** Phase 4 (Observability and a small security layer). Phase 1 done 2026-11-22; Phase 2 done 2026-11-22; Phase 3 done 2026-11-25
+- **Current phase:** Phase 5 (LLM gateway and model routing). Phase 1 done 2026-11-22; Phase 2 done 2026-11-22; Phase 3 done 2026-11-25; Phase 4 done 2026-11-25
 - Update this line when a phase's acceptance criteria pass.
 
 ## Out of scope
@@ -111,6 +111,7 @@ Add each command here as it starts working.
 - Gateway: `curl -X POST localhost:8080/v1/ask -H "Authorization: Bearer <key from GATEWAY_API_KEYS>" -d '{"question": ...}'`; 401 bad key, 429 over `RATE_LIMIT_PER_MINUTE`
 - `uv run python -m mcp_servers.math_server` / `mcp_servers.filings_server`: MCP servers over stdio (client config in README)
 - `make test-gateway`: gofmt, vet and Go tests in the golang Docker image (Go not installed locally)
+- `uv run python -m evals.attacks [--no-defense]`: the 31-case prompt-injection set against the agent (deterministic checks, cached LLM replies); `evals.run --agent --no-defense` is the undefended agent on the golden set. `uv run python -m security.attacks.build` regenerates `src/security/attacks/cases.jsonl`
 - Tracing: set `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/`LANGFUSE_BASE_URL` in `.env` (Langfuse Cloud); every agent run, LLM call, search, rerank and tool call becomes a trace. Empty keys turn it off; tests never trace
 - `make test`: unit tests (`uv run pytest`)
 - `make lint`: ruff check + format check

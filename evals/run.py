@@ -2,6 +2,7 @@
 
 Usage: uv run python -m evals.run [--retrieval vector|hybrid] [--rerank nvidia|bge|minilm|none]
                                   [--backend qdrant|pinecone] [--limit N] [--save-baseline]
+                                  [--agent [--no-defense]]
 
 Recall@k: share of a question's gold sources found in the top-k retrieved chunks. A chunk finds a
 source if it is from the same company and contains the source's match strings (the figures from
@@ -257,7 +258,7 @@ def full_run(rag, judge_llm, golden: list[dict], args, agent=None) -> dict:
     lookups, in that order), so its R@k is not comparable with single-search R@k."""
     rows = []
     start = time.monotonic()
-    name = "agent" if agent else rag.retrieval
+    name = ("agent" if agent.defend else "agent-nodefense") if agent else rag.retrieval
     for i, q in enumerate(golden, 1):
         extra = {}
         if agent:
@@ -358,6 +359,9 @@ def main() -> None:
     parser.add_argument(
         "--agent", action="store_true", help="Run the Phase 3 LangGraph agent (hybrid + nvidia)"
     )
+    parser.add_argument(
+        "--no-defense", action="store_true", help="With --agent: the undefended Phase 3 agent"
+    )
     parser.add_argument("--candidates", type=int, default=CANDIDATES, help="Chunks to rerank")
     parser.add_argument("--collection", default=COLLECTION, help="Qdrant collection to search")
     parser.add_argument(
@@ -404,7 +408,7 @@ def main() -> None:
             summaries.append(recall_only(rag, golden, args))
             continue
         rag.llm = CachedLLM(rag.llm, CACHE_DIR)
-        agent = Agent(rag, rag.llm) if args.agent else None
+        agent = Agent(rag, rag.llm, defend=not args.no_defense) if args.agent else None
         summaries.append(full_run(rag, judge_llm, golden, args, agent))
 
     if args.save_baseline:

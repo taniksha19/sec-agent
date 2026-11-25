@@ -55,3 +55,6 @@ Thumbs.db
 .claude/settings.local.json
 
 .claude/worktrees/
+
+# Private resume notes
+resume-bullets.md

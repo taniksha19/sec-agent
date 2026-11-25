@@ -20,6 +20,7 @@ from pydantic import Field, ValidationError
 
 from agent.graph import load_companies
 from ingest.models import FiscalPeriod, FormType
+from security.clean import cleaned
 from tools.models import (
     LookupTableInput,
     LookupTableOutput,
@@ -88,7 +89,11 @@ def default_retrieve() -> Retrieve:
 def create_server(retrieve: Retrieve | None = None, companies: dict[str, str] | None = None):
     """Tests pass a fake retrieve; the real one is built on the first tool call."""
     companies = companies if companies is not None else load_companies()
-    get_retrieve = (lambda: retrieve) if retrieve else default_retrieve
+
+    # Results are cleaned (the agent's rules) whichever retrieve is used.
+    def get_retrieve():
+        return cleaned(retrieve or default_retrieve())
+
     calls: deque[float] = deque()
     server = MCPServer(
         "sec-filings",

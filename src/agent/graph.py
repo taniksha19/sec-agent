@@ -8,8 +8,10 @@ Usage: uv run python -m agent.graph "Compare R&D growth for NVIDIA and AMD from 
 
 The graph is fixed (not a free ReAct loop) so LLM calls and tool calls are bounded. Rewritten
 queries are written by a model that has read retrieved (untrusted) text: they stay inside the
-planner's ticker filter and are length-capped, and every round's evidence is kept. Phase 4
-sanitizes chunks before the grader and answer prompts.
+planner's ticker filter and are length-capped, and every round's evidence is kept. With
+defend=True (the default) the Phase 4 security layer is on: retrieved chunks are cleaned, the
+grader and answer prompts put them in <source> delimiters, and tool arguments must stay within
+the question's companies and years (src/security/).
 """
 
 import csv
@@ -26,9 +28,14 @@ from langfuse import get_client, observe
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ValidationError
 
-from agent.baseline import NOT_FOUND, SYSTEM_PROMPT, BaselineRAG, build_prompt, parse_citations
+from agent.baseline import NOT_FOUND, SYSTEM_PROMPT, BaselineRAG, parse_citations
+from agent.baseline import build_prompt as plain_prompt
 from api.models import ToolCall
 from retrieval.base import SearchResult
+from security import guard
+from security.clean import cleaned
+from security.prompt import DATA_RULE
+from security.prompt import build_prompt as delimited_prompt
 from tools.calculator import calculate
 from tools.compare import compare
 from tools.models import CalculateInput, CompareInput, LookupTableInput
@@ -145,9 +152,20 @@ def add_unique(results: list[SearchResult], new: list[SearchResult]) -> list[Sea
 
 
 class Agent:
-    def __init__(self, rag: BaselineRAG, llm, companies: dict[str, str] | None = None) -> None:
-        self.rag, self.llm = rag, llm
+    def __init__(
+        self,
+        rag: BaselineRAG,
+        llm,
+        companies: dict[str, str] | None = None,
+        defend: bool = True,
+    ) -> None:
+        """defend=False is the undefended Phase 3 agent, kept to measure the defenses."""
+        self.rag, self.llm, self.defend = rag, llm, defend
         self.companies = companies if companies is not None else load_companies()
+        self.search = cleaned(rag.retrieve) if defend else rag.retrieve
+        self.build_prompt = delimited_prompt if defend else plain_prompt
+        self.grade_prompt = GRADE_PROMPT + DATA_RULE if defend else GRADE_PROMPT
+        self.answer_prompt = ANSWER_PROMPT + DATA_RULE if defend else ANSWER_PROMPT
         graph = StateGraph(State)
         graph.add_node("plan", self.plan)
         graph.add_node("retrieve", self.retrieve)
@@ -190,13 +208,13 @@ class Agent:
     def retrieve(self, state: State) -> dict:
         sub = state["subs"][state["current"]]
         filters = {"ticker": sub.ticker} if sub.ticker else None
-        return {"candidates": self.rag.retrieve(state["query"], CHUNKS_PER_SUB, filters)}
+        return {"candidates": self.search(state["query"], CHUNKS_PER_SUB, filters)}
 
     @observe(as_type="chain", name="grade", capture_input=False, capture_output=False)
     def grade(self, state: State) -> dict:
         sub = state["subs"][state["current"]]
-        prompt = build_prompt(sub.question, state["candidates"])
-        resp = self.llm.chat(GRADE_PROMPT, prompt, max_tokens=200)
+        prompt = self.build_prompt(sub.question, state["candidates"])
+        resp = self.llm.chat(self.grade_prompt, prompt, max_tokens=200)
         verdict = parse_json(resp.text)
         better = str(verdict.get("better_query") or "").strip()[:MAX_QUERY_CHARS]
         # Every round's chunks are kept: the grader reads untrusted text, so a poisoned chunk
@@ -229,9 +247,10 @@ class Agent:
     def answer(self, state: State) -> dict:
         sources = list(state["evidence"])
         messages: list[dict] = [
-            {"role": "system", "content": ANSWER_PROMPT},
-            {"role": "user", "content": build_prompt(state["question"], sources)},
+            {"role": "system", "content": self.answer_prompt},
+            {"role": "user", "content": self.build_prompt(state["question"], sources)},
         ]
+        allowed = guard.scope(state["question"], [(s.question, s.ticker) for s in state["subs"]])
         calls: list[ToolCall] = []
         totals = {"llm_calls": 0, "input_tokens": 0, "output_tokens": 0}
         for step in range(MAX_TOOL_STEPS + 1):
@@ -262,7 +281,7 @@ class Agent:
                     result = json.dumps({"error": "tool budget exhausted; answer now"})
                     call = ToolCall(name=c["name"], arguments={}, ok=False)
                 else:
-                    result, call = self.run_tool(c["name"], c["arguments"], sources)
+                    result, call = self.run_tool(c["name"], c["arguments"], sources, allowed)
                 calls.append(call)
                 messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
         return {
@@ -276,18 +295,18 @@ class Agent:
     # Tools
 
     def run_tool(
-        self, name: str, arguments: str, sources: list[SearchResult]
+        self, name: str, arguments: str, sources: list[SearchResult], allowed: guard.Scope
     ) -> tuple[str, ToolCall]:
         """Run one tool call. lookup_table rows join `sources` so the answer can cite them."""
         with get_client().start_as_current_observation(
             name=name, as_type="tool", input=arguments
         ) as span:
-            result, call = self._run_tool(name, arguments, sources)
+            result, call = self._run_tool(name, arguments, sources, allowed)
             span.update(output=result, level="DEFAULT" if call.ok else "WARNING")
         return result, call
 
     def _run_tool(
-        self, name: str, arguments: str, sources: list[SearchResult]
+        self, name: str, arguments: str, sources: list[SearchResult], allowed: guard.Scope
     ) -> tuple[str, ToolCall]:
         try:
             args = json.loads(arguments or "{}")
@@ -299,11 +318,16 @@ class Agent:
             if name == "calculate":
                 result = calculate(CalculateInput.model_validate(args)).model_dump_json()
             elif name == "compare":
-                result = compare(CompareInput.model_validate(args)).model_dump_json()
+                inp = CompareInput.model_validate(args)
+                if self.defend:
+                    guard.check(name, inp.model_dump(), allowed)
+                result = compare(inp).model_dump_json()
             elif name == "lookup_table":
                 inp = LookupTableInput.model_validate(args)
                 if inp.ticker.upper() not in self.companies:
                     raise ValueError(f"unknown ticker {inp.ticker!r}")
+                if self.defend:
+                    guard.check(name, inp.model_dump(), allowed)
                 result = self.table_result(inp, sources)
             else:
                 raise ValueError(f"unknown tool {name!r}")
@@ -323,7 +347,7 @@ class Agent:
         found: dict[str, SearchResult] = {}
 
         def retrieve(query, k, filters):
-            results = self.rag.retrieve(query, k, filters)
+            results = self.search(query, k, filters)
             found.update({r.chunk.chunk_id: r for r in results})
             return results
 
