@@ -25,6 +25,7 @@ Production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings r
 6. **Tests** for parsing, retrieval, and tool logic. Every eval is reproducible from `make eval`.
 7. **Pinned dependencies.** Secrets only in `.env` (git-ignored); keep `.env.example` current.
 8. **Local first.** Everything runs with `docker compose up` on a laptop before any cloud step.
+9. **New work starts on a new branch** from main (`git switch -c <phase>-<task>`), never directly on main. Merge into main and push only after the user approves.
 
 ## Cost and cloud rules (strict)
 
