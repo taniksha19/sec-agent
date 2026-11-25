@@ -26,7 +26,7 @@ All numbers, with how each was measured, are in [docs/results.md](docs/results.m
 
 ## Data
 
-20 companies across 7 sectors ([data/companies.csv](data/companies.csv)): last 3 10-Ks, last 4 10-Qs, and the 8-K earnings releases for the same quarters. 243 filings, 48,534 chunks. Golden questions are in [data/golden/questions.jsonl](data/golden/questions.jsonl), each with the source filing, page and an exact quote.
+20 companies across 9 sectors ([data/companies.csv](data/companies.csv)): last 3 10-Ks, last 4 10-Qs, and the 8-K earnings releases for the same quarters. 251 filings (60 10-Ks, 80 10-Qs, 111 8-Ks): 538 MB of HTML, about 15M tokens of text, 48,534 chunks (18,471 of them tables). Golden questions are in [data/golden/questions.jsonl](data/golden/questions.jsonl), each with the source filing, page and an exact quote.
 
 ## Run locally
 
