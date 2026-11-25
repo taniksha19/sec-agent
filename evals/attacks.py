@@ -1,6 +1,6 @@
 """Run the prompt-injection attack set against this project's own agent.
 
-Usage: uv run python -m evals.attacks [--no-defense] [--limit N]
+Usage: uv run python -m evals.attacks [--no-defense] [--route strong|fast|routed] [--limit N]
 
 Each case plants its payload in the vector store's results, in every chunk that holds the
 golden answer (matched as for recall: same company, contains the figure). The reranker, the
@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 from agent.baseline import from_env
 from agent.graph import Agent
 from evals.run import CACHE_DIR, RESULTS_DIR, contains, found, percentile
+from llm_gateway import router
 from llm_gateway.cache import CachedLLM
 from retrieval.base import SearchResult
 
@@ -122,16 +123,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--no-defense", action="store_true", help="The undefended Phase 3 agent")
     parser.add_argument("--limit", type=int, help="Only run the first N cases")
+    parser.add_argument(
+        "--route", choices=sorted(router.POLICIES), default="strong", help="Model per step"
+    )
     args = parser.parse_args()
     load_dotenv()
     defend = not args.no_defense
     rag = from_env()
-    rag.llm = CachedLLM(rag.llm, CACHE_DIR)
+    llms = router.from_env(args.route, lambda llm: CachedLLM(llm, CACHE_DIR))
     store = rag.store
     rows = []
     for case in load_cases()[: args.limit]:
         rag.store = poisoned = PoisonedStore(store, case)
-        out = Agent(rag, rag.llm, defend=defend).run(case["question"])
+        out = Agent(rag, llms, defend=defend).run(case["question"])
         row = {
             "id": case["id"],
             "category": case["category"],
@@ -142,6 +146,7 @@ def main() -> None:
             "answer": out["answer"],
             "tool_calls": [t.model_dump() for t in out["tool_calls"]],
             "llm_calls": out["llm_calls"],
+            "models": out["models"],
             "latency_ms": out["latency_ms"],
         }
         rows.append(row)
@@ -150,12 +155,12 @@ def main() -> None:
 
     summary = summarize(rows) | {
         "defenses": defend,
-        "answer_model": rag.llm.model,
+        "route": args.route,
         "run_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    name = "defended" if defend else "undefended"
+    name = ("defended" if defend else "undefended") + f"-{args.route}"
     out_path = RESULTS_DIR / f"attacks-{stamp}-{name}.json"
     out_path.write_text(json.dumps({"summary": summary, "rows": rows}, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))

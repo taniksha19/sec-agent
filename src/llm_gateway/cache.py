@@ -15,10 +15,12 @@ from llm_gateway.client import LLMClient, LLMResponse
 
 
 class CachedLLM:
-    def __init__(self, llm: LLMClient, cache_dir: Path) -> None:
+    def __init__(self, llm: LLMClient, cache_dir: Path, read: bool = True) -> None:
+        """read=False always calls the API (to time real calls) but still writes the cache."""
         self.llm = llm
         self.model = llm.model
         self.cache_dir = Path(cache_dir)
+        self.read = read
 
     def _path(self, *request) -> Path:
         llm = self.llm
@@ -27,7 +29,7 @@ class CachedLLM:
         return self.cache_dir / digest[:2] / f"{digest}.json"
 
     def _cached(self, path: Path, call) -> LLMResponse:
-        if path.exists():
+        if self.read and path.exists():
             return LLMResponse(**json.loads(path.read_text(encoding="utf-8")))
         resp = call()
         if resp.text or resp.tool_calls:  # don't pin an empty reply; retry it next run

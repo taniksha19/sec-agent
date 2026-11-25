@@ -2,7 +2,7 @@
 
 Usage: uv run python -m evals.run [--retrieval vector|hybrid] [--rerank nvidia|bge|minilm|none]
                                   [--backend qdrant|pinecone] [--limit N] [--save-baseline]
-                                  [--agent [--no-defense]]
+                                  [--agent [--no-defense] [--route strong|fast|routed] [--fresh]]
 
 Recall@k: share of a question's gold sources found in the top-k retrieved chunks. A chunk finds a
 source if it is from the same company and contains the source's match strings (the figures from
@@ -19,6 +19,7 @@ import json
 import os
 import re
 import time
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from dotenv import load_dotenv
 from agent.baseline import COLLECTION, NOT_FOUND, TOP_K, Answer, from_env
 from agent.graph import Agent
 from ingest.models import Chunk
+from llm_gateway import router
 from llm_gateway.cache import CachedLLM
 from llm_gateway.client import LLMClient
 from retrieval.rerank import CANDIDATES, MODELS
@@ -242,6 +244,7 @@ def agent_answer(agent, question: str) -> tuple[Answer, dict]:
         "rounds": out["rounds_used"],
         "tool_calls": [t.model_dump() for t in out["tool_calls"]],
         "llm_calls": out["llm_calls"],
+        "models": out["models"],
         "latency_ms": out["latency_ms"],
     }
     return ans, extra
@@ -259,6 +262,8 @@ def full_run(rag, judge_llm, golden: list[dict], args, agent=None) -> dict:
     rows = []
     start = time.monotonic()
     name = ("agent" if agent.defend else "agent-nodefense") if agent else rag.retrieval
+    if agent:
+        name += f"-{args.route}" if args.route != "strong" else ""
     for i, q in enumerate(golden, 1):
         extra = {}
         if agent:
@@ -310,6 +315,11 @@ def full_run(rag, judge_llm, golden: list[dict], args, agent=None) -> dict:
             "avg_rounds": round(sum(r["rounds"] for r in rows) / len(rows), 2),
             "latency_ms_p50": percentile(latencies, 0.5),
             "latency_ms_p95": percentile(latencies, 0.95),
+            "route": args.route,
+            "fresh": args.fresh,
+            "calls_by_model": dict(Counter(m for r in rows for m in r["models"])),
+            # Questions with at least one call served by the fallback provider.
+            "fell_back": sum(router.FALLBACK_MODEL in r["models"] for r in rows),
         }
     summary.update(
         {
@@ -362,6 +372,17 @@ def main() -> None:
     parser.add_argument(
         "--no-defense", action="store_true", help="With --agent: the undefended Phase 3 agent"
     )
+    parser.add_argument(
+        "--route",
+        choices=sorted(router.POLICIES),
+        default="strong",
+        help="With --agent: which model serves each step (llm_gateway/router.py)",
+    )
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="With --agent: call the answer models even if cached (real latency); judge cached",
+    )
     parser.add_argument("--candidates", type=int, default=CANDIDATES, help="Chunks to rerank")
     parser.add_argument("--collection", default=COLLECTION, help="Qdrant collection to search")
     parser.add_argument(
@@ -408,7 +429,12 @@ def main() -> None:
             summaries.append(recall_only(rag, golden, args))
             continue
         rag.llm = CachedLLM(rag.llm, CACHE_DIR)
-        agent = Agent(rag, rag.llm, defend=not args.no_defense) if args.agent else None
+        agent = None
+        if args.agent:
+            llms = router.from_env(
+                args.route, lambda llm: CachedLLM(llm, CACHE_DIR, not args.fresh)
+            )
+            agent = Agent(rag, llms, defend=not args.no_defense)
         summaries.append(full_run(rag, judge_llm, golden, args, agent))
 
     if args.save_baseline:

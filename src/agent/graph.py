@@ -18,6 +18,7 @@ import csv
 import json
 import logging
 import operator
+import os
 import re
 import sys
 import time
@@ -31,6 +32,7 @@ from pydantic import BaseModel, ValidationError
 from agent.baseline import NOT_FOUND, SYSTEM_PROMPT, BaselineRAG, parse_citations
 from agent.baseline import build_prompt as plain_prompt
 from api.models import ToolCall
+from llm_gateway.router import Router
 from retrieval.base import SearchResult
 from security import guard
 from security.clean import cleaned
@@ -50,6 +52,9 @@ CHUNKS_PER_SUB = 5
 MAX_TABLE_ROWS = 8
 MAX_TOOL_CALLS = 8  # per question, across all answer turns
 MAX_QUERY_CHARS = 300
+# Per-question token cap (input + output, all LLM calls). Phase 4 averaged 9.6k; past the cap
+# the grader stops retrying and the answer turn gets no more tools.
+MAX_QUESTION_TOKENS = 60_000
 COMPANIES = Path(__file__).resolve().parents[2] / "data" / "companies.csv"
 JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
@@ -100,6 +105,7 @@ class State(TypedDict, total=False):
     llm_calls: Annotated[int, operator.add]
     input_tokens: Annotated[int, operator.add]
     output_tokens: Annotated[int, operator.add]
+    models: Annotated[list[str], operator.add]  # model that served each LLM call, in order
 
 
 def load_companies(path: Path = COMPANIES) -> dict[str, str]:
@@ -143,7 +149,16 @@ TOOLS = [
 
 
 def usage(resp) -> dict:
-    return {"llm_calls": 1, "input_tokens": resp.input_tokens, "output_tokens": resp.output_tokens}
+    return {
+        "llm_calls": 1,
+        "input_tokens": resp.input_tokens,
+        "output_tokens": resp.output_tokens,
+        "models": [resp.model],
+    }
+
+
+def over_budget(state: State) -> bool:
+    return state["input_tokens"] + state["output_tokens"] > MAX_QUESTION_TOKENS
 
 
 def add_unique(results: list[SearchResult], new: list[SearchResult]) -> list[SearchResult]:
@@ -155,12 +170,14 @@ class Agent:
     def __init__(
         self,
         rag: BaselineRAG,
-        llm,
+        llm: Router | object,
         companies: dict[str, str] | None = None,
         defend: bool = True,
     ) -> None:
-        """defend=False is the undefended Phase 3 agent, kept to measure the defenses."""
-        self.rag, self.llm, self.defend = rag, llm, defend
+        """llm is a Router (a model per step) or one LLM for every step. defend=False is the
+        undefended Phase 3 agent, kept to measure the defenses."""
+        self.router = llm if isinstance(llm, Router) else Router({"strong": llm})
+        self.rag, self.defend = rag, defend
         self.companies = companies if companies is not None else load_companies()
         self.search = cleaned(rag.retrieve) if defend else rag.retrieve
         self.build_prompt = delimited_prompt if defend else plain_prompt
@@ -184,7 +201,7 @@ class Agent:
     def plan(self, state: State) -> dict:
         listing = ", ".join(f"{t}: {n}" for t, n in self.companies.items())
         system = PLAN_PROMPT.format(companies=listing, max_subs=MAX_SUB_QUESTIONS)
-        resp = self.llm.chat(system, state["question"], max_tokens=400)
+        resp = self.router.for_step("plan").chat(system, state["question"], max_tokens=400)
         subs = []
         for item in parse_json(resp.text).get("sub_questions", [])[:MAX_SUB_QUESTIONS]:
             try:
@@ -214,13 +231,14 @@ class Agent:
     def grade(self, state: State) -> dict:
         sub = state["subs"][state["current"]]
         prompt = self.build_prompt(sub.question, state["candidates"])
-        resp = self.llm.chat(self.grade_prompt, prompt, max_tokens=200)
+        resp = self.router.for_step("grade").chat(self.grade_prompt, prompt, max_tokens=200)
         verdict = parse_json(resp.text)
         better = str(verdict.get("better_query") or "").strip()[:MAX_QUERY_CHARS]
         # Every round's chunks are kept: the grader reads untrusted text, so a poisoned chunk
         # that steers the rewrite must not also be able to throw away earlier evidence.
         evidence = add_unique(state["evidence"], state["candidates"])
-        if verdict.get("answered") is not True and state["round"] < MAX_ROUNDS and better:
+        retry = state["round"] < MAX_ROUNDS and better and not over_budget(state)
+        if verdict.get("answered") is not True and retry:
             return {
                 "query": better,
                 "round": state["round"] + 1,
@@ -252,10 +270,13 @@ class Agent:
         ]
         allowed = guard.scope(state["question"], [(s.question, s.ticker) for s in state["subs"]])
         calls: list[ToolCall] = []
-        totals = {"llm_calls": 0, "input_tokens": 0, "output_tokens": 0}
+        totals = {"llm_calls": 0, "input_tokens": 0, "output_tokens": 0, "models": []}
+        llm = self.router.for_step("answer")
         for step in range(MAX_TOOL_STEPS + 1):
-            tools = TOOLS if step < MAX_TOOL_STEPS else None  # last turn must answer
-            resp = self.llm.complete(messages, tools, max_tokens=800)
+            spent = {k: state[k] + totals[k] for k in ("input_tokens", "output_tokens")}
+            # The last turn, or one past the token cap, must answer without tools.
+            tools = TOOLS if step < MAX_TOOL_STEPS and not over_budget(spent) else None
+            resp = llm.complete(messages, tools, max_tokens=800)
             for key, value in usage(resp).items():
                 totals[key] += value
             if not resp.tool_calls:
@@ -375,6 +396,7 @@ class Agent:
                 "llm_calls": 0,
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "models": [],
             }
         )
         state["latency_ms"] = round((time.monotonic() - start) * 1000)
@@ -388,6 +410,7 @@ class Agent:
                 "sub_questions": [s.question for s in state["subs"]],
                 "rounds": state["rounds_used"],
                 "llm_calls": state["llm_calls"],
+                "models": state["models"],
                 "tool_calls": [c.name for c in state["tool_calls"]],
                 "refused": state["refused"],
             },
@@ -395,11 +418,13 @@ class Agent:
         return state
 
 
-def from_env() -> Agent:
+def from_env(policy: str | None = None) -> Agent:
+    """policy: strong, fast or routed (llm_gateway/router.py); defaults to LLM_ROUTE."""
     from agent.baseline import from_env as rag_from_env
+    from llm_gateway import router
 
     rag = rag_from_env()
-    return Agent(rag, rag.llm)
+    return Agent(rag, router.from_env(policy or os.getenv("LLM_ROUTE", "strong")))
 
 
 def main() -> None:

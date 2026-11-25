@@ -106,6 +106,7 @@ Add each command here as it starts working.
 - `make eval`: golden set through vector, hybrid and hybrid+NVIDIA rerank (`--all`), one table of recall@1/5/10, judged accuracy, faithfulness, refusals. Needs Qdrant up, `LLM_*`, `NVIDIA_API_KEY` and `GEMINI_API_KEY` in `.env`. LLM replies and rerank scores cached in `data/cache/`. Single setup: `uv run python -m evals.run --retrieval hybrid --rerank nvidia`; `--recall-only` skips all LLM calls; `--save-baseline` writes `evals/baseline.json`; `--limit N` for a quick run
 - `uv run python -m retrieval.index_pinecone`: upload all chunks to Pinecone (`sec-dense` + `sec-sparse`, needs `PINECONE_API_KEY`); then `evals.run --recall-only --backend pinecone` compares backends
 - `uv run python -m agent.baseline "question"`: one cited answer from the CLI
+- `evals.run --agent --route strong|fast|routed [--fresh]`: Phase 5 model routing (fast model for plan/grade, strong for answers, Gemini fallback on provider errors); `--fresh` calls the answer models even when cached, for real latency (judge stays cached). The API reads `LLM_ROUTE`
 - `uv run python -m agent.graph "question"`: Phase 3 agent (plan, corrective retrieval, tools) from the CLI; `--agent` on `evals.run` evaluates it
 - `make api`: FastAPI on :8000 outside Docker, for development. `POST /v1/ask {"question": ...}`, `GET /healthz`
 - Gateway: `curl -X POST localhost:8080/v1/ask -H "Authorization: Bearer <key from GATEWAY_API_KEYS>" -d '{"question": ...}'`; 401 bad key, 429 over `RATE_LIMIT_PER_MINUTE`

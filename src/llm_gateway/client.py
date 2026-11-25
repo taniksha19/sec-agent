@@ -1,6 +1,6 @@
 """Minimal chat client for any OpenAI-compatible endpoint (NVIDIA hosted, Ollama, Groq, ...).
 
-Configured from .env: LLM_BASE_URL, LLM_API_KEY, LLM_MODEL. Phase 5 adds routing on top.
+Configured from .env: LLM_BASE_URL, LLM_API_KEY, LLM_MODEL. Routing is in llm_gateway/router.py.
 """
 
 import os
@@ -38,17 +38,20 @@ class LLMClient:
         model: str | None = None,
         extra_body: dict | None = None,
         min_interval: float = 0.0,
+        max_retries: int = 6,
+        timeout: float = 60,
     ) -> None:
-        self.model = model or os.environ["LLM_MODEL"]
+        # `is None`, not `or`: an empty value must never pick up another provider's key or model.
+        self.model = os.environ["LLM_MODEL"] if model is None else model
         self.extra_body = extra_body
         self.min_interval = min_interval  # seconds between calls, to stay under per-minute caps
         self._last_call = 0.0
-        self.base_url = base_url or os.environ["LLM_BASE_URL"]
+        self.base_url = os.environ["LLM_BASE_URL"] if base_url is None else base_url
         self._client = OpenAI(
             base_url=self.base_url,
-            api_key=api_key or os.environ["LLM_API_KEY"],
-            max_retries=6,  # free tiers rate-limit (429); the SDK backs off between retries
-            timeout=60,  # the SDK default is 600 s per attempt
+            api_key=os.environ["LLM_API_KEY"] if api_key is None else api_key,
+            max_retries=max_retries,  # free tiers rate-limit (429); the SDK backs off and retries
+            timeout=timeout,  # seconds per attempt; the SDK default is 600
         )
 
     def chat(self, system: str, user: str, max_tokens: int = 800) -> LLMResponse:

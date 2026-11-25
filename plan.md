@@ -58,7 +58,7 @@ Python handles the AI logic, Go handles the gateway, and everything runs in cont
 | Keyword search | BM25 (rank-bm25 or Postgres full-text) | Hybrid with vectors |
 | Reranker | Cross-encoder (e.g., bge-reranker) | Compare against no reranker |
 | Embeddings | Open model (e.g., bge or e5) | Same model across all backends for fair comparison |
-| LLM routing | LLM gateway (own code or LiteLLM) | Cheap model (e.g., Groq, Gemini Flash, Haiku) vs. strong model |
+| LLM routing | LLM gateway (own code) | Fast small model vs. strong model, free tiers (NVIDIA, Gemini fallback) |
 | Observability | Langfuse, Prometheus, Grafana | Tracing on every LLM call |
 | Infra | Docker Compose (local), kind (local K8s), GKE or EKS (final) | Terraform for cloud |
 | CI/CD | GitHub Actions | Lint, tests, evals gate merges |
@@ -144,12 +144,14 @@ Rescoped 2026-11-25: most of the time goes to observability, which the resume la
 
 ### Phase 5: LLM gateway and model routing
 
-- Build the LLM gateway: one interface over a cheap hosted model and a strong hosted model, with per-call token and cost accounting.
-- Add a routing policy that picks the model per question (start with simple rules such as question type and number of retrieved chunks; try a small classifier only if rules fall short).
-- Add fallback on provider errors or rate limits, and a per-request cost cap.
-- Run the golden set three ways: cheap-only, strong-only, routed. Record accuracy, p95 latency, and cost per query for each, and which question types the router sends where.
+Free models only (decided 2026-11-25): no dollar cost to save, so the goal is latency. Phase 4 traces showed 93% of agent time is LLM calls.
 
-*Acceptance:* routing lowers cost per query vs. strong-only on the golden set at similar accuracy (or `docs/decisions.md` explains why not); fallback is covered by a test.
+- Build the LLM gateway: one interface over a fast small model (`nemotron-3.5-lightning-30b-a3b`) and a strong model (`nemotron-3.5-super-vl-120b-a12b`, today's model), both on NVIDIA's free tier, with per-call token accounting per model.
+- Add a routing policy that picks the model per call (start with simple rules such as agent step and question type; try a small classifier only if rules fall short).
+- Add fallback on provider errors, rate limits or timeouts to a different provider (`gemini-3.1-flash-lite`, Gemini free tier; `gemini-3.5-flash` timed out in a probe), and a per-request token cap.
+- Run the golden set three ways: fast-only, strong-only, routed. Record accuracy, p50/p95 latency and tokens per model for each, which steps and question types go where, and how often fallback ran (Gemini is also the judge's provider).
+
+*Acceptance:* routing lowers p50 latency vs. strong-only on the golden set at similar accuracy (or `docs/decisions.md` explains why not); fallback is covered by a test. Dollar cost stays blank: no paid model is used.
 
 ### Phase 6: Deploy and stress test
 
@@ -252,8 +254,8 @@ Every resume bullet will be built from a number in `docs/results.md`, so Claude 
 | 3 | Recall and p95 latency, backend A vs. backend B |  |  |
 | 4 | Agent p50/p95 latency with per-step breakdown (from traces) |  |  |
 | 4 | Attack success rate and clean accuracy: no defense vs. all defenses |  |  |
-| 5 | Cost per query: strong-only vs. routed (at matched accuracy) |  |  |
-| 5 | Answer accuracy and p95 latency: cheap-only vs. strong-only vs. routed |  |  |
+| 5 | p50/p95 latency: strong-only vs. routed (at matched accuracy) |  |  |
+| 5 | Answer accuracy and p95 latency: fast-only vs. strong-only vs. routed |  |  |
 | 6 | Load test: requests/s, p50/p95 latency, pod count |  |  |
 | 6 | CI: merge blocked on a deliberate regression (yes/no, evidence) |  |  |
 
