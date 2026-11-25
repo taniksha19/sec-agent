@@ -17,8 +17,9 @@ Every measured number in this project. Leave a cell blank if it was not measured
 | 3 | Recall@1 / @5 / @10, agent | 0.694 / 0.849 / 0.875 | 0.703 / 0.853 / 0.957 | Agent recall is over every chunk it gathered across sub-questions, rounds and table lookups |
 | 3 | Agent cost and latency per question | 1 LLM call, 2,206 input / 45 output tokens | 3.95 LLM calls, 9,844 input / 172 output tokens; p50 41.5 s, p95 90.5 s; 1.32 retrieval rounds; tools used on 33% (multi-hop 100%, table 44%), 0 failed tool calls | Same agent run, sequential, NVIDIA free tier. Latency is wall time of `Agent.run` (LLM, rerank, Qdrant); the cause of the spread (13-122 s) was not measured. No-agent latency not recorded. This run used `QDRANT_URL=http://localhost:6333`, which on Windows added about 2 s to every Qdrant request (found 2026-11-25), so these latencies are too high by an unmeasured amount; re-measure |
 | 3 | Recall and latency, backend A vs. backend B | Qdrant 1.20 (local Docker): hybrid R@1/5/10 0.319 / 0.534 / 0.647; retrieve p50 28-32 ms, p95 46-50 ms. With NVIDIA rerank: 0.694 / 0.849 / 0.875 | Pinecone serverless (free Starter, AWS us-east-1): hybrid 0.302 / 0.534 / 0.647; retrieve p50 58-61 ms, p95 80-83 ms. With NVIDIA rerank: 0.694 / 0.849 / 0.875 | `evals.run --recall-only --rerank none\|nvidia --backend qdrant\|pinecone`, 58 answerable golden questions, 2026-11-25. Same chunks, embeddings, BM25 weights and RRF on both (Pinecone: separate dense and sparse indexes, fused in our code). Latency is wall time of `retrieve` (query embedding + search) after one warm-up query, 3 runs each, range shown; it includes the network round trip from a laptop to us-east-1. Rerank-run latencies are left out: the rerank scores were cache hits |
-| 4 | Attack success rate with and without sanitizer; false-positive rate | | | |
-| 4 | Added latency from sanitizer | | | |
+| 4 | Agent p50/p95 latency with per-step breakdown (from traces) | | | |
+| 4 | Attack success rate and clean accuracy: no defense vs. all defenses | | | |
+| 4 | Added latency from defenses | | | |
 | 5 | Cost per query: strong-only vs. routed (at matched accuracy) | | | |
 | 5 | Answer accuracy and p95 latency: cheap-only vs. strong-only vs. routed | | | |
 | 6 | Load test: requests/s, p50/p95 latency, pod count | | | |

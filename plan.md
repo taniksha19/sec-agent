@@ -12,7 +12,7 @@ Build a production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K ea
 
 - Hybrid retrieval (BM25 + vectors) with a reranker, benchmarked against a vector-only baseline.
 - A LangGraph agent with tools exposed through MCP servers, behind a Go or TypeScript API gateway.
-- A prompt-injection sanitizer with before/after attack success rates.
+- A small prompt-injection defense (prompt hardening, chunk cleaning, tool guardrails) with before/after attack success rates.
 - An LLM gateway that routes between a cheap and a strong hosted model by question difficulty, with measured cost per query vs. accuracy.
 - Langfuse tracing, Grafana dashboards, and evals that gate merges in CI.
 - Kubernetes deployment with Terraform, autoscaling, and a load test.
@@ -87,7 +87,7 @@ sec-agent/
     agent/                # LangGraph graph, prompts
     tools/                # calculator, table lookup, comparison
     mcp_servers/          # MCP server wrappers around tools
-    security/             # sanitizer, attack corpus
+    security/             # chunk cleaning, tool guardrails, attack set
     llm_gateway/          # model routing by cost and latency
     api/                  # FastAPI app
   gateway/                # Go service
@@ -132,13 +132,15 @@ Six phases, about one week each. Do them in order; each ends with a commit, a RE
 
 *Acceptance:* multi-step questions (for example, "compare R&D spend growth for A and B over 3 years") are answered via tool calls; gateway rejects bad keys and enforces limits; both backends pass the golden set with recall and latency recorded.
 
-### Phase 4: Security layer and observability
+### Phase 4: Observability and a small security layer
 
-- Build the prompt-injection corpus and sanitizer (details in the Security section).
-- Add Langfuse tracing to every retrieval, tool, and LLM call.
+Rescoped 2026-11-25: most of the time goes to observability, which the resume lacks; the security work is kept small, since the resume already covers LLM safety evaluation and the corpus (SEC EDGAR) is low-risk in practice.
+
+- Add Langfuse tracing to every retrieval, tool, and LLM call. Use it to find where the agent's time goes and re-measure agent latency (the Phase 3 numbers include a since-fixed ~2 s delay per Qdrant request).
 - Add Prometheus metrics and a Grafana dashboard: p50/p95 latency, token cost, error rate, retrieval hit rate.
+- Build a small prompt-injection attack set and three defenses (details in the Security section). No injection classifier.
 
-*Acceptance:* attack success rate measured with and without the sanitizer; every request visible as a Langfuse trace; the dashboard shows live metrics. This is the first demo-ready checkpoint.
+*Acceptance:* every request visible as a Langfuse trace; the dashboard shows live metrics; agent p50/p95 latency re-measured with a per-step breakdown; attack success rate measured with no defense and with all defenses, with clean-set accuracy for both. This is the first demo-ready checkpoint.
 
 ### Phase 5: LLM gateway and model routing
 
@@ -192,33 +194,30 @@ Write answers by reading the actual filings, not by asking a model. Spot-check a
 
 ## Security layer
 
-The differentiator: most RAG demos ignore the fact that retrieved text is untrusted input. This layer measures how often injected instructions inside documents hijack the agent, then shows how much a sanitizer reduces that.
+Retrieved filing text is untrusted input. Today it reaches the grader and answer prompts unchanged: a chunk can forge a `[n]` source block or a `Question:` line, and `lookup_table` returns filing cells verbatim. This layer closes that gap and measures the effect. It is deliberately small (about 1-2 days).
 
-**Threat model.** The user is trusted. The filings and any other retrieved text are not. An attacker who can influence a document (a poisoned filing excerpt, an earnings release, an uploaded file) tries to make the agent ignore its instructions, leak its system prompt or tool configuration, call tools it should not, or give a false answer.
+**Threat model.** The user is trusted. The filings and any other retrieved text are not. An attacker who can influence a document tries to make the agent ignore its instructions, leak its system prompt, call tools with attacker-chosen arguments, or give a false answer.
 
-**Attack corpus** (`src/security/attacks/`, committed as JSONL)
+**Attack set** (`src/security/attacks/`, committed as JSONL)
 
-- Build 50+ test cases by inserting benign-looking injected text into real filing chunks. Cover categories: instruction override, system-prompt extraction, tool misuse (for example, forcing a tool call with attacker-chosen arguments), answer manipulation (state a wrong figure), and instructions hidden in tables or footnotes.
-- Keep the corpus inside a controlled test harness against your own agent. Do not target any third-party system.
-- Each case records the category, the clean chunk it modifies, the injected payload, and a pass/fail check (did the agent follow the injection?).
+- About 30 cases, each inserting injected text into a real filing chunk for a golden question. Categories: instruction override, system-prompt extraction, tool misuse, answer manipulation (state a wrong figure), instructions hidden in tables.
+- Each case records the category, the clean chunk, the payload, and a deterministic pass/fail check where possible (the wrong figure or a leaked prompt string appears; a tool was called with the payload's arguments).
+- Run only against this project's own agent, never a third-party system.
 
-**Defenses to build and compare**
+**Defenses** (`src/security/`, one place on the retrieve path, so the agent and the MCP servers share it)
 
-1. **Baseline:** no defense.
-2. **Prompt hardening:** clear separation of instructions and retrieved content, with the retrieved text explicitly marked as data.
-3. **Sanitizer:** flags and strips instruction-like content from chunks before they reach the agent. Compare (a) rules, (b) an off-the-shelf open injection classifier run on CPU (check current models before starting), and optionally (c) the sanitizer model from the Agentic AI course project, if it is ready by Phase 4.
-4. **Tool guardrails:** allow-list tool arguments and require that tool calls trace back to the user's request, not retrieved text.
+1. **Prompt hardening:** retrieved text wrapped in explicit data delimiters and labeled as data, not instructions, in the grader and answer prompts.
+2. **Chunk cleaning (rules):** neutralize text that imitates the prompt's own structure (source markers, `Question:` lines, delimiter strings) and strip control characters. No classifier: filings are full of ordinary sentences addressed to "you" ("you should not rely on forward-looking statements"), so a classifier's false positives would cost accuracy for little gain on this corpus.
+3. **Tool guardrails:** tool arguments must refer to companies and years in the user's question or the planner's output, never values found only in retrieved text.
 
 **Measurement**
 
-| Configuration | Attack success rate | Answer accuracy on clean golden set | Added latency |
+| Configuration | Attack success rate | Clean golden-set accuracy | Added latency |
 | --- | --- | --- | --- |
-| No defense | measure | measure | none |
-| Prompt hardening | measure | measure | measure |
-| Sanitizer | measure | measure | measure |
-| Sanitizer + tool guardrails | measure | measure | measure |
+| No defense | measure | 0.939 (Phase 3) | none |
+| All three defenses | measure | measure | measure |
 
-The tradeoff matters: report false positives (clean chunks wrongly stripped) and the accuracy cost of each defense, not only the attack success rate drop. Write the results and failure cases into `docs/results.md` and `docs/decisions.md`.
+If an attack category still succeeds, record it as a known gap rather than adding a classifier. Write results and failure cases into `docs/results.md` and `docs/decisions.md`.
 
 ## Infra, budget, and cost controls
 
@@ -251,8 +250,8 @@ Every resume bullet will be built from a number in `docs/results.md`, so Claude 
 | --- | --- | --- | --- |
 | 2 | Recall@5, answer accuracy (vector-only vs. hybrid + rerank) |  |  |
 | 3 | Recall and p95 latency, backend A vs. backend B |  |  |
-| 4 | Attack success rate with and without sanitizer; false-positive rate |  |  |
-| 4 | Added latency from sanitizer |  |  |
+| 4 | Agent p50/p95 latency with per-step breakdown (from traces) |  |  |
+| 4 | Attack success rate and clean accuracy: no defense vs. all defenses |  |  |
 | 5 | Cost per query: strong-only vs. routed (at matched accuracy) |  |  |
 | 5 | Answer accuracy and p95 latency: cheap-only vs. strong-only vs. routed |  |  |
 | 6 | Load test: requests/s, p50/p95 latency, pod count |  |  |

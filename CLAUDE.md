@@ -8,7 +8,7 @@ Production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings r
 
 ## Current status
 
-- **Current phase:** Phase 4 (Security layer and observability). Phase 1 done 2026-11-22; Phase 2 done 2026-11-22; Phase 3 done 2026-11-25
+- **Current phase:** Phase 4 (Observability and a small security layer). Phase 1 done 2026-11-22; Phase 2 done 2026-11-22; Phase 3 done 2026-11-25
 - Update this line when a phase's acceptance criteria pass.
 
 ## Out of scope
@@ -47,7 +47,7 @@ Production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings r
 
 Defined in `.claude/agents/`. All three are read-only reviewers/runners; they report and never edit.
 
-- **eval-runner**: after any change to retrieval, prompts, routing, or the sanitizer, and before marking a phase done.
+- **eval-runner**: after any change to retrieval, prompts, routing, or the security layer, and before marking a phase done.
 - **security-reviewer**: on any diff touching retrieval, agent, tools, MCP servers, gateway, or config.
 - **cost-guard**: before any Terraform/cloud command or large paid LLM run, and on diffs touching `infra/` or `src/llm_gateway/`.
 
@@ -72,7 +72,7 @@ Safe splits by phase:
 | 1 | (a) EDGAR download + parse + chunk (`src/ingest/`); (b) docker-compose, Qdrant, `VectorStore`, embeddings (`src/retrieval/`); golden set written by hand (`data/golden/`) | Chunk schema and metadata fields |
 | 2 | (a) BM25 + fusion + reranker (`src/retrieval/`); (b) eval harness + LLM judge (`evals/`); (c) table-aware extraction (`src/ingest/`) | Golden set, baseline numbers |
 | 3 | (a) LangGraph agent + tools (`src/agent/`, `src/tools/`); (b) MCP servers (`src/mcp_servers/`); (c) Go gateway (`gateway/`); (d) second backend (`src/retrieval/`) | Tool signatures, FastAPI request/response models |
-| 4 | (a) attack corpus + sanitizer (`src/security/`); (b) Langfuse + Prometheus + Grafana (observability config) | Agent answering end to end |
+| 4 | (a) Langfuse + Prometheus + Grafana (observability config); (b) attack set + defenses (`src/security/`) | Agent answering end to end |
 | 5 | Mostly sequential: gateway interface first, then routing policy and comparison runs | — |
 | 6 | (a) k8s manifests/Helm + HPA (`infra/k8s/`); (b) GitHub Actions CI (`.github/`); (c) load test scripts (`loadtest/`); Terraform (`infra/terraform/`) only after kind works | Stack running on kind |
 
@@ -84,7 +84,7 @@ src/retrieval/    VectorStore interface, backends, BM25, hybrid fusion, rerank
 src/agent/        LangGraph graph and prompts
 src/tools/        calculator, table lookup, comparison
 src/mcp_servers/  MCP wrappers around tools
-src/security/     sanitizer, attack corpus
+src/security/     chunk cleaning, prompt delimiters, tool guardrails, attack set
 src/llm_gateway/  routing between cheap and strong hosted models, cost accounting, fallback
 src/api/          FastAPI app
 gateway/          Go API gateway (auth, rate limit, logging)

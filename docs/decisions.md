@@ -196,3 +196,8 @@ Template:
 - **Chosen:** Qdrant stays primary: same recall, lower latency here, runs locally and in the k8s stack with no third-party data store. Pinecone stays as an eval-only backend (`--backend pinecone`); the API never uses it.
 - **Found on the way:** `localhost` on Windows tries IPv6 first; Qdrant in Docker listens on IPv4 only, so every request waited ~2 s (2,051 ms vs 16 ms per query on `127.0.0.1`). Defaults and `.env.example` now use `127.0.0.1`. Earlier local latency numbers (the Phase 3 agent's p50 41.5 s) include this delay and need re-measuring.
 - **Security review:** no high findings; added a 30 s per-request timeout on Pinecone queries.
+
+## 2026-11-25: Phase 4 rescoped: observability first, small security layer, no classifier
+- **Why:** this project fills gaps for AI Engineer roles. Tracing, metrics and latency work are missing elsewhere; LLM safety evaluation is already covered by another project. The corpus is SEC EDGAR, so real injection risk is low.
+- **Kept:** an attack set of about 30 cases and three defenses (prompt delimiters, rule-based chunk cleaning, tool guardrails), measured as no defense vs. all defenses, with clean-set accuracy.
+- **Dropped:** comparing injection classifiers (ProtectAI DeBERTa, Llama Prompt Guard 2). Filings are full of ordinary sentences addressed to "you", so false positives would cost accuracy for little gain here. Not measured; revisit only if an attack category gets through all three defenses.
