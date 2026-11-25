@@ -76,7 +76,7 @@ def default_retrieve() -> Retrieve:
         if name not in os.environ and values.get(name):
             os.environ[name] = values[name]
     embedder = Embedder()
-    client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+    client = QdrantClient(url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"))
     store = QdrantStore(client, COLLECTION, embedder.dim)
     # retrieve() never calls the LLM, so none is built.
     rag = BaselineRAG(

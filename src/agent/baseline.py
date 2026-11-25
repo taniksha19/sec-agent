@@ -115,16 +115,31 @@ class BaselineRAG:
         )
 
 
+def make_store(backend: str, collection: str, dim: int) -> VectorStore:
+    """Qdrant is the primary backend; Pinecone is only for the Phase 3 comparison."""
+    if backend == "pinecone":
+        from pinecone import Pinecone
+
+        from retrieval.pinecone_store import DENSE_INDEX, SPARSE_INDEX, PineconeStore
+
+        pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
+        return PineconeStore(pc.Index(DENSE_INDEX), pc.Index(SPARSE_INDEX))
+    client = QdrantClient(url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"))
+    return QdrantStore(client, collection, dim)
+
+
 def from_env(
-    retrieval: str = "hybrid", rerank: str | None = "nvidia", collection: str = COLLECTION
+    retrieval: str = "hybrid",
+    rerank: str | None = "nvidia",
+    collection: str = COLLECTION,
+    backend: str = "qdrant",
 ) -> BaselineRAG:
     """Defaults are the Phase 2 winner (docs/decisions.md); vector/no rerank is the baseline."""
     load_dotenv()
     embedder = Embedder()
-    client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
     llm = LLMClient(extra_body=NO_THINKING)
     sparse = SparseEmbedder() if retrieval == "hybrid" else None
-    store = QdrantStore(client, collection, embedder.dim)
+    store = make_store(backend, collection, embedder.dim)
     reranker = Reranker(rerank) if rerank else None
     return BaselineRAG(store, embedder, llm, sparse=sparse, reranker=reranker)
 

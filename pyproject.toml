@@ -12,6 +12,7 @@ dependencies = [
     "mcp>=2.3.0",
     "numpy>=2.5.5",
     "openai>=3.57.0",
+    "pinecone>=10.3.0",
     "pydantic>=2.14.3",
     "python-dotenv>=1.2.4",
     "qdrant-client>=1.20.0",

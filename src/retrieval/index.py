@@ -43,7 +43,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+    client = QdrantClient(url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"))
     if args.recreate and client.collection_exists(args.collection):
         client.delete_collection(args.collection)
 

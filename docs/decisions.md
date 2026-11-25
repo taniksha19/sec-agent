@@ -180,3 +180,19 @@ Template:
 - **Unfaithful but correct (4):** three narrative answers attach the wrong [n] to one claim among many; one states a computed difference with no citation for the arithmetic. Candidates for the answer prompt: cite per sentence, cite the source of each operand next to a calculated number.
 - **Kept:** the agent. The accuracy gain is concentrated where Phase 2 failed (two-company questions), and no unanswerable question was answered.
 - **Open:** where the latency goes. Phase 4 Langfuse tracing gives per-call timing; until then the p50/p95 above are the measured numbers.
+
+## 2026-11-25: Second vector backend: Pinecone
+- **Setup:** Pinecone serverless on the free Starter plan (AWS us-east-1, indexes tagged `project=sec-agent`). Pinecone's hybrid mode puts dense and sparse in one dotproduct index and mixes raw scores; to compare engines, not fusion methods, it uses two indexes (`sec-dense` cosine, `sec-sparse`), both queried in parallel and fused in our code with Qdrant's RRF.
+- **Matching Qdrant exactly:** Qdrant applies BM25 IDF at query time; Pinecone doesn't, so the document weights are multiplied by IDF before upload. Checked against Qdrant's own scores on the real corpus: IDF `ln((N - n + 0.5) / (n + 0.5) + 1)` matches to 5 decimals, and Qdrant's RRF is `1 / (rank + 2)` (rank from 0), not the textbook k=60.
+- **Upload:** 48,534 chunks per index in 9.2 min from the embedding cache (no re-embedding).
+- **Measured (58 questions, recall-only):**
+
+  | Backend | R@1 / @5 / @10 (hybrid) | With NVIDIA rerank | Retrieve p50 / p95 |
+  | --- | --- | --- | --- |
+  | Qdrant, local Docker | 0.319 / 0.534 / 0.647 | 0.694 / 0.849 / 0.875 | 28-32 / 46-50 ms |
+  | Pinecone, us-east-1 | 0.302 / 0.534 / 0.647 | 0.694 / 0.849 / 0.875 | 58-61 / 80-83 ms |
+
+  Recall is the same except one question at @1 (approximate-search differences). The Pinecone gap is mostly the network trip from a laptop to us-east-1, which Qdrant doesn't make here; a cloud Qdrant would pay it too.
+- **Chosen:** Qdrant stays primary: same recall, lower latency here, runs locally and in the k8s stack with no third-party data store. Pinecone stays as an eval-only backend (`--backend pinecone`); the API never uses it.
+- **Found on the way:** `localhost` on Windows tries IPv6 first; Qdrant in Docker listens on IPv4 only, so every request waited ~2 s (2,051 ms vs 16 ms per query on `127.0.0.1`). Defaults and `.env.example` now use `127.0.0.1`. Earlier local latency numbers (the Phase 3 agent's p50 41.5 s) include this delay and need re-measuring.
+- **Security review:** no high findings; added a 30 s per-request timeout on Pinecone queries.

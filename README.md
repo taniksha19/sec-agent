@@ -2,7 +2,7 @@
 
 A production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings releases) that answers financial questions with citations, defends against prompt injection in retrieved documents, and runs on Kubernetes with measured latency, quality, and cost.
 
-> Status: Phases 1 (data and baseline RAG) and 2 (better retrieval and evals) done. **Phase 3 (agent and API layer)** in progress: LangGraph agent, FastAPI service, Go gateway and MCP servers done; the second vector backend (Pinecone) comparison is left. See [plan.md](plan.md) for the full build plan.
+> Status: Phases 1 (data and baseline RAG) and 2 (better retrieval and evals) done. **Phase 3 (agent and API layer)** in progress: LangGraph agent, FastAPI service, Go gateway, MCP servers and the Qdrant vs. Pinecone comparison done. See [plan.md](plan.md) for the full build plan.
 
 ## Results
 
@@ -19,7 +19,8 @@ A production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings
 
 - Biggest gains are on table questions (accuracy 0.444 in Phase 1, 0.833 now) and multi-hop (0.000 to 0.333).
 - No invented answers: all 8 unanswerable questions are refused in every setup.
-- The Phase 3 agent splits two-company questions and retries weak retrievals: multi-hop accuracy 0.444 to 0.889. It costs about 4 LLM calls per question (p50 41.5 s, p95 90.5 s on the NVIDIA free tier), and faithfulness drops to 0.930 from citation slips on long answers.
+- The Phase 3 agent splits two-company questions and retries weak retrievals: multi-hop accuracy 0.444 to 0.889. It costs about 4 LLM calls per question (p50 41.5 s, p95 90.5 s on the NVIDIA free tier, measured before a ~2 s-per-request local Qdrant delay was fixed; to be re-measured), and faithfulness drops to 0.930 from citation slips on long answers.
+- Second backend: Pinecone serverless gives the same recall as Qdrant on the same chunks and fusion (R@5 0.849 with rerank on both); retrieval p95 80-83 ms vs. 46-50 ms for local Qdrant, mostly the network trip to us-east-1.
 
 All numbers, with how each was measured, are in [docs/results.md](docs/results.md).
 

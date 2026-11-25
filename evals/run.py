@@ -1,7 +1,7 @@
 """Run the golden set through the baseline and score retrieval and answers.
 
 Usage: uv run python -m evals.run [--retrieval vector|hybrid] [--rerank nvidia|bge|minilm|none]
-                                  [--limit N] [--save-baseline]
+                                  [--backend qdrant|pinecone] [--limit N] [--save-baseline]
 
 Recall@k: share of a question's gold sources found in the top-k retrieved chunks. A chunk finds a
 source if it is from the same company and contains the source's match strings (the figures from
@@ -197,22 +197,30 @@ def recall_only(rag, golden: list[dict], args) -> dict:
     """Retrieval metrics without any LLM call: free, fast, and unaffected by judge quotas.
     For chunking and retrieval experiments; accuracy still needs the full run."""
     rows = []
+    rag.retrieve(golden[0]["question"], max(KS))  # warm-up: model load and first connection
     for q in golden:
         if not q["sources"]:
             continue
+        start = time.perf_counter()
         chunks = [r.chunk for r in rag.retrieve(q["question"], max(KS))]
+        ms = (time.perf_counter() - start) * 1000
         recall = {str(k): recall_at_k(q["sources"], chunks, k) for k in KS}
-        rows.append({"id": q["id"], "type": q["type"], "recall": recall})
+        rows.append({"id": q["id"], "type": q["type"], "recall": recall, "retrieve_ms": ms})
+    latencies = [r["retrieve_ms"] for r in rows]
     summary = {
         "n": len(rows),
         "recall": {
             f"@{k}": round(sum(r["recall"][str(k)] for r in rows) / len(rows), 3) for k in KS
         },
+        # Wall time of rag.retrieve: query embedding, search, and the rerank call if any.
+        "retrieve_ms_p50": round(percentile(latencies, 0.5)),
+        "retrieve_ms_p95": round(percentile(latencies, 0.95)),
         "retrieval": rag.retrieval,
+        "backend": args.backend,
         "collection": args.collection,
         "tickers": args.tickers,
     }
-    out = write_run("recall", rag.retrieval, summary, rows)
+    out = write_run("recall", f"{args.backend}-{rag.retrieval}", summary, rows)
     print(json.dumps(summary))
     print(f"Details: {out}")
     return summary
@@ -352,6 +360,9 @@ def main() -> None:
     )
     parser.add_argument("--candidates", type=int, default=CANDIDATES, help="Chunks to rerank")
     parser.add_argument("--collection", default=COLLECTION, help="Qdrant collection to search")
+    parser.add_argument(
+        "--backend", choices=["qdrant", "pinecone"], default="qdrant", help="Vector store"
+    )
     parser.add_argument("--tickers", nargs="*", help="Only questions whose sources are all these")
     parser.add_argument("--limit", type=int, help="Only run the first N questions")
     parser.add_argument("--save-baseline", action="store_true", help="Write evals/baseline.json")
@@ -387,7 +398,7 @@ def main() -> None:
     configs = ALL_CONFIGS if args.all else [(args.retrieval, rerank)]
     summaries = []
     for retrieval, reranker in configs:
-        rag = from_env(retrieval, reranker, args.collection)
+        rag = from_env(retrieval, reranker, args.collection, args.backend)
         rag.candidates = args.candidates
         if args.recall_only:
             summaries.append(recall_only(rag, golden, args))
