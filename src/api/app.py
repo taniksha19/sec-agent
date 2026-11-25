@@ -114,7 +114,10 @@ def create_app(agent=None) -> FastAPI:
             log.exception("agent run failed")
             metrics.record_error(time.monotonic() - start)
             raise HTTPException(502, "The research agent failed upstream.") from None
-        metrics.record(out)
+        try:
+            metrics.record(out)
+        except Exception:  # a metrics bug must not cost the user a good answer
+            log.exception("recording metrics failed")
         return to_response(out)
 
     return app

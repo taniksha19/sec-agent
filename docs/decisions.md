@@ -201,3 +201,11 @@ Template:
 - **Why:** this project fills gaps for AI Engineer roles. Tracing, metrics and latency work are missing elsewhere; LLM safety evaluation is already covered by another project. The corpus is SEC EDGAR, so real injection risk is low.
 - **Kept:** an attack set of about 30 cases and three defenses (prompt delimiters, rule-based chunk cleaning, tool guardrails), measured as no defense vs. all defenses, with clean-set accuracy.
 - **Dropped:** comparing injection classifiers (ProtectAI DeBERTa, Llama Prompt Guard 2). Filings are full of ordinary sentences addressed to "you", so false positives would cost accuracy for little gain here. Not measured; revisit only if an attack category gets through all three defenses.
+
+## 2026-11-25: Tracing and metrics
+- **Tracing:** Langfuse Cloud (free Hobby plan), not self-hosted: self-hosting adds 6 containers (ClickHouse, Postgres, Redis, MinIO, web, worker), about 2-3 GB of the laptop's 7.4 GB Docker memory. Traces hold questions, public filing text, prompts and model output; no keys or headers (security review). Empty keys turn tracing off.
+- **First trace finding:** of a 126 s agent run, 7 LLM calls took ~122 s (17-23 s each) and 8 search + rerank steps ~4 s in total. A 2-token test reply also took ~17 s with no retries: the hosted model's speed, not our pipeline, sets agent latency, and it varies by day (8.2 s for the same question on 2026-11-22). Input for Phase 5 routing and fallback.
+- **Metrics:** Prometheus + Grafana in docker compose (local, ~0.3 GB), recorded once per request from the agent's result; per-step timing stays in Langfuse. `/metrics` is internal (the gateway doesn't route it); tool labels are limited to known tool names so model output can't create new series.
+- **Answer rate** (answered / answered + refused) stands in for "retrieval hit rate": live questions have no ground truth. Golden-set recall stays the real measure.
+- **Not yet:** a token-cost panel (the model is on a free tier; Phase 5 adds prices).
+- **Accepted:** Prometheus on 127.0.0.1:9090 has no auth or Host check, so a DNS-rebinding page could read aggregate metrics (no write: admin and lifecycle APIs are off). Kept for debugging; drop the port in Phase 6.
