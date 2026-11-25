@@ -8,7 +8,7 @@ Production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings r
 
 ## Current status
 
-- **Current phase:** Phase 3 (Agent and API layer). Phase 1 done 2026-11-22; Phase 2 done 2026-11-22
+- **Current phase:** Phase 4 (Security layer and observability). Phase 1 done 2026-11-22; Phase 2 done 2026-11-22; Phase 3 done 2026-11-25
 - Update this line when a phase's acceptance criteria pass.
 
 ## Out of scope
