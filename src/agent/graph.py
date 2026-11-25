@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 from typing import Annotated, TypedDict
 
+from langfuse import get_client, observe
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ValidationError
 
@@ -161,6 +162,7 @@ class Agent:
 
     # Nodes
 
+    @observe(as_type="chain", name="plan", capture_input=False, capture_output=False)
     def plan(self, state: State) -> dict:
         listing = ", ".join(f"{t}: {n}" for t, n in self.companies.items())
         system = PLAN_PROMPT.format(companies=listing, max_subs=MAX_SUB_QUESTIONS)
@@ -190,6 +192,7 @@ class Agent:
         filters = {"ticker": sub.ticker} if sub.ticker else None
         return {"candidates": self.rag.retrieve(state["query"], CHUNKS_PER_SUB, filters)}
 
+    @observe(as_type="chain", name="grade", capture_input=False, capture_output=False)
     def grade(self, state: State) -> dict:
         sub = state["subs"][state["current"]]
         prompt = build_prompt(sub.question, state["candidates"])
@@ -222,6 +225,7 @@ class Agent:
     def after_grade(self, state: State) -> str:
         return "retrieve" if state["current"] < len(state["subs"]) else "answer"
 
+    @observe(as_type="chain", name="answer", capture_input=False, capture_output=False)
     def answer(self, state: State) -> dict:
         sources = list(state["evidence"])
         messages: list[dict] = [
@@ -275,6 +279,16 @@ class Agent:
         self, name: str, arguments: str, sources: list[SearchResult]
     ) -> tuple[str, ToolCall]:
         """Run one tool call. lookup_table rows join `sources` so the answer can cite them."""
+        with get_client().start_as_current_observation(
+            name=name, as_type="tool", input=arguments
+        ) as span:
+            result, call = self._run_tool(name, arguments, sources)
+            span.update(output=result, level="DEFAULT" if call.ok else "WARNING")
+        return result, call
+
+    def _run_tool(
+        self, name: str, arguments: str, sources: list[SearchResult]
+    ) -> tuple[str, ToolCall]:
         try:
             args = json.loads(arguments or "{}")
         except json.JSONDecodeError:
@@ -327,6 +341,7 @@ class Agent:
 
     # Entry point
 
+    @observe(as_type="agent", name="agent", capture_input=False, capture_output=False)
     def run(self, question: str) -> dict:
         start = time.monotonic()
         state = self.graph.invoke(
@@ -341,6 +356,17 @@ class Agent:
         state["latency_ms"] = round((time.monotonic() - start) * 1000)
         state["refused"] = (
             state["answer"].strip().rstrip(".").lower() == NOT_FOUND.rstrip(".").lower()
+        )
+        get_client().update_current_span(
+            input=question,
+            output=state["answer"],
+            metadata={
+                "sub_questions": [s.question for s in state["subs"]],
+                "rounds": state["rounds_used"],
+                "llm_calls": state["llm_calls"],
+                "tool_calls": [c.name for c in state["tool_calls"]],
+                "refused": state["refused"],
+            },
         )
         return state
 

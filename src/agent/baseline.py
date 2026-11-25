@@ -12,6 +12,7 @@ import sys
 from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
+from langfuse import get_client, observe
 from qdrant_client import QdrantClient
 
 from llm_gateway.client import NO_THINKING, LLMClient
@@ -87,18 +88,30 @@ class BaselineRAG:
         name = "hybrid" if self.sparse else "vector"
         return f"{name}+{self.reranker.name}" if self.reranker else name
 
+    @observe(as_type="retriever", name="retrieve", capture_input=False, capture_output=False)
     def retrieve(
         self, question: str, k: int | None = None, filters: Filters | None = None
     ) -> list[SearchResult]:
         k = k or self.k
         n = max(k, self.candidates) if self.reranker else k
-        dense = self.embedder.embed_query(question)
-        if self.sparse is None:
-            results = self.store.search(dense, n, filters)
-        else:
-            sparse = self.sparse.embed_query(question)
-            results = self.store.hybrid_search(dense, sparse, n, filters)
-        return self.reranker.rerank(question, results, k) if self.reranker else results
+        lf = get_client()
+        with lf.start_as_current_observation(name="search", input={"candidates": n}):
+            dense = self.embedder.embed_query(question)
+            if self.sparse is None:
+                results = self.store.search(dense, n, filters)
+            else:
+                sparse = self.sparse.embed_query(question)
+                results = self.store.hybrid_search(dense, sparse, n, filters)
+        if self.reranker:
+            with lf.start_as_current_observation(
+                name="rerank", input={"model": self.reranker.name}
+            ):
+                results = self.reranker.rerank(question, results, k)
+        lf.update_current_span(
+            input={"query": question, "k": k, "filters": filters},
+            output=[{"chunk_id": r.chunk.chunk_id, "score": round(r.score, 4)} for r in results],
+        )
+        return results
 
     def answer(self, question: str) -> Answer:
         return self.generate(question, self.retrieve(question))

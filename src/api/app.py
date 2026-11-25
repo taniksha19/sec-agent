@@ -9,10 +9,12 @@ in docker compose this API has no host port.
 """
 
 import logging
+import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from langfuse import propagate_attributes
 
 from api.models import AskRequest, AskResponse, Citation, Usage
 from retrieval.base import SearchResult
@@ -21,6 +23,8 @@ log = logging.getLogger(__name__)
 QUOTE_CHARS = 300
 # Rejects other Host headers, so a web page can't reach the local API through DNS rebinding.
 ALLOWED_HOSTS = ["localhost", "127.0.0.1", "api"]
+# The gateway sets X-Request-ID (16 hex chars); anything else is not copied into traces.
+REQUEST_ID_RE = re.compile(r"[0-9a-f]{16}")
 
 
 def citation(n: int, result: SearchResult) -> Citation:
@@ -89,8 +93,12 @@ def create_app(agent=None) -> FastAPI:
     # A sync route: FastAPI runs it in a worker thread, so a slow agent run doesn't block others.
     @app.post("/v1/ask", response_model=AskResponse)
     def ask(body: AskRequest, request: Request) -> AskResponse:
+        request_id = request.headers.get("x-request-id", "")
+        metadata = {"request_id": request_id} if REQUEST_ID_RE.fullmatch(request_id) else None
         try:
-            out = request.app.state.agent.run(body.question)
+            # Ties the Langfuse trace to the gateway's log line for the same request.
+            with propagate_attributes(trace_name="ask", metadata=metadata):
+                out = request.app.state.agent.run(body.question)
         except Exception:
             # Upstream errors (LLM, reranker, Qdrant) may carry URLs or request details;
             # log them here and return a generic message.

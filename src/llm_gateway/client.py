@@ -8,6 +8,7 @@ import re
 import time
 from dataclasses import dataclass, field
 
+from langfuse import get_client, observe
 from openai import OpenAI
 
 # Some open models (Nemotron, Qwen) emit their reasoning in <think> tags before the answer.
@@ -54,6 +55,9 @@ class LLMClient:
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
         return self.complete(messages, max_tokens=max_tokens)
 
+    # Traced as a Langfuse generation (a no-op without LANGFUSE_* keys). Inputs are set by hand:
+    # automatic capture would record `self`, and the prompt is enough to debug a call.
+    @observe(as_type="generation", name="llm", capture_input=False, capture_output=False)
     def complete(
         self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int = 800
     ) -> LLMResponse:
@@ -77,10 +81,18 @@ class LLMClient:
             for c in message.tool_calls or []
         ]
         usage = resp.usage
-        return LLMResponse(
+        out = LLMResponse(
             text=text,
             model=self.model,
             input_tokens=usage.prompt_tokens if usage else 0,
             output_tokens=usage.completion_tokens if usage else 0,
             tool_calls=calls,
         )
+        get_client().update_current_generation(
+            model=self.model,
+            input=messages,
+            output={"text": text, "tool_calls": calls} if calls else text,
+            model_parameters={"max_tokens": max_tokens, "tools": len(tools or [])},
+            usage_details={"input": out.input_tokens, "output": out.output_tokens},
+        )
+        return out
