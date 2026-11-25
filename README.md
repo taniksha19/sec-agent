@@ -2,7 +2,7 @@
 
 A production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings releases) that answers financial questions with citations, defends against prompt injection in retrieved documents, and runs on Kubernetes with measured latency, quality, and cost.
 
-> Status: Phases 1 (data and baseline RAG) and 2 (better retrieval and evals) done. **Phase 3 (agent and API layer)** next. See [plan.md](plan.md) for the full build plan.
+> Status: Phases 1 (data and baseline RAG) and 2 (better retrieval and evals) done. **Phase 3 (agent and API layer)** in progress: LangGraph agent, FastAPI service, Go gateway and MCP servers done; the second vector backend (Pinecone) comparison is left. See [plan.md](plan.md) for the full build plan.
 
 ## Results
 
