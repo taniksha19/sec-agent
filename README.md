@@ -2,7 +2,7 @@
 
 A production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings releases) that answers financial questions with citations, defends against prompt injection in retrieved documents, and runs on Kubernetes with measured latency, quality, and cost.
 
-> Status: Phases 1 (data and baseline RAG), 2 (better retrieval and evals) 3 (agent, API, Go gateway, MCP servers, Qdrant vs. Pinecone) and 4 (Langfuse tracing, Prometheus + Grafana, prompt-injection defenses) done. **Phase 5 (LLM routing between hosted models)** next. See [plan.md](plan.md) for the full build plan.
+> Status: Phases 1 (data and baseline RAG), 2 (better retrieval and evals) 3 (agent, API, Go gateway, MCP servers, Qdrant vs. Pinecone) 4 (Langfuse tracing, Prometheus + Grafana, prompt-injection defenses) and 5 (LLM routing between free hosted models, provider fallback) done. **Phase 6 (Kubernetes, load test, CI)** next. See [plan.md](plan.md) for the full build plan.
 
 ## Results
 
@@ -23,6 +23,7 @@ A production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings
 - The Phase 3 agent splits two-company questions and retries weak retrievals: multi-hop accuracy 0.444 to 0.889. It costs about 4 LLM calls per question and faithfulness drops to 0.930 from citation slips on long answers.
 - Latency (Phase 4, from Langfuse traces): p50 13.8 s, p95 48.9 s on the NVIDIA free tier; 92.8% of agent time is hosted-LLM calls, 6.5% rerank, 0.5% vector search.
 - Prompt injection: 31 attacks planted in real retrieved filings. With no defense 5 succeed; with delimiters, chunk cleaning and tool guardrails 3 do (tool misuse 2/6 to 0/6), at no cost to clean accuracy. The model alone already resisted all wrong-figure, prompt-leak and table attacks; the remaining gaps are in [docs/decisions.md](docs/decisions.md).
+- Model routing (Phase 5, free models): sending the planner and grader steps to a small fast model halves agent latency (p50 5.5 s to 2.8 s, p95 31.8 s to 14.6 s) but costs accuracy (0.985 to 0.924 in the same interleaved run): the fast grader stops searching too early. Strong-only stays the default; `LLM_ROUTE=routed` turns routing on. A Gemini fallback covers NVIDIA timeouts and rate limits.
 - Second backend: Pinecone serverless gives the same recall as Qdrant on the same chunks and fusion (R@5 0.849 with rerank on both); retrieval p95 80-83 ms vs. 46-50 ms for local Qdrant, mostly the network trip to us-east-1.
 
 All numbers, with how each was measured, are in [docs/results.md](docs/results.md).

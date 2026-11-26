@@ -8,7 +8,7 @@ Production-style RAG research agent over SEC filings (10-K, 10-Q, 8-K earnings r
 
 ## Current status
 
-- **Current phase:** Phase 5 (LLM gateway and model routing). Phase 1 done 2026-11-22; Phase 2 done 2026-11-22; Phase 3 done 2026-11-25; Phase 4 done 2026-11-25
+- **Current phase:** Phase 6 (Deploy and stress test). Phase 1 done 2026-11-22; Phase 2 done 2026-11-22; Phase 3 done 2026-11-25; Phase 4 done 2026-11-25; Phase 5 done 2026-11-26
 - Update this line when a phase's acceptance criteria pass.
 
 ## Out of scope
@@ -85,7 +85,7 @@ src/agent/        LangGraph graph and prompts
 src/tools/        calculator, table lookup, comparison
 src/mcp_servers/  MCP wrappers around tools
 src/security/     chunk cleaning, prompt delimiters, tool guardrails, attack set
-src/llm_gateway/  routing between cheap and strong hosted models, cost accounting, fallback
+src/llm_gateway/  routing between fast and strong hosted models, token accounting, fallback
 src/api/          FastAPI app
 gateway/          Go API gateway (auth, rate limit, logging)
 evals/            eval harness, metrics, CI entrypoint, baseline.json

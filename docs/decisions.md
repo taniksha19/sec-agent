@@ -238,3 +238,32 @@ Template:
   - The Phase 1 `BaselineRAG.answer` path stays deliberately unprotected (it's the baseline); the API uses the defended agent.
 - **Regression to watch:** table-02 (Apple R&D as % of net sales) was wrong in both runs, but with defenses the agent skipped its table lookups and answered only `[1]`. It is the only recall change in the run (R@10 0.957 to 0.948). Cause not investigated.
 - **Latency:** cleaning costs 0.29 ms per chunk. The delimiters add no measurable prompt length.
+
+## 2026-11-26: Phase 5 model routing (free models)
+- **Models:**
+  - Strong: Nemotron 3.5 Super, today's model.
+  - Fast: Nemotron 3.5 Lightning, 30B parameters with 3B active.
+  - Fallback: Gemini 3.1 Flash-Lite.
+  - All are free tiers, so the goal was latency, not dollars (plan.md).
+  - Gemini 3.5 Flash was dropped as the fallback: it took 67-94 s per call with SDK retries, then timed out and returned 503s without them.
+- **Probe before routing:** the fast model answered the R&D-growth prompt in 0.2-0.5 s against 5.5-8.1 s for the strong model, but did the math itself and cited nothing. So answer turns (tools, citations) stay on the strong model, and only plan and grade (short JSON) were routed.
+- **Measuring latency fairly took three tries:**
+  - Back-to-back runs: the strong model's answer calls were 4x slower in the second run, which hid the routing gain.
+  - Concurrent runs: they hit NVIDIA 429s and fell back to Gemini 10 times.
+  - Final run: the eval interleaves routes question by question, flipping the order each question (`--route strong routed fast`).
+- **Measured (66 questions, interleaved, fresh calls):**
+  - Routed cut p50 from 5.5 s to 2.8 s (-49%) and p95 from 31.8 s to 14.6 s (-54%).
+  - Accuracy was 0.924 vs 0.985, and recall@5 0.797 vs 0.853.
+  - Fast-only was fastest (p50 1.3 s), but it never called a tool and 35 answers had no citations (faithfulness 0.368).
+- **Why routing loses accuracy:** the fast grader marks evidence as answered too early, so the agent averages 1.26 retrieval rounds vs 1.32, and two lost multi-hop questions stopped after round 1. Recall@5 was lower in every routed run.
+- **Chosen:** strong-only stays the default (`LLM_ROUTE=strong`). For cited financial figures, the 2-6 point accuracy loss outweighs about 3 s at p50. Routing is one setting away (`LLM_ROUTE=routed`) and halves latency where that matters more. Not tried: fast planner with strong grader, since grading is where both the time savings and the accuracy loss are.
+- **Fallback bug found:** a 429 in the middle of an answer turn sent the tool-call history to Gemini, which rejected it with a 400: Gemini requires its own thought signature on earlier tool calls. Fallbacks now send earlier tool calls and results as text, labelled as data. A test covers this, and it was checked live.
+- **Security and cost review:**
+  - Empty keys no longer fall through to another provider's key (an empty `GEMINI_API_KEY` would have sent the NVIDIA key to Google). The router fails fast without it.
+  - Fallback calls are spaced 4.5 s apart, with 1 retry and a 30 s timeout.
+  - Logs keep the error type and status only.
+  - The per-question token cap (60k) is soft: it stops grader retries and tool turns, but a sub-question's first grade and the final answer still run.
+  - During a fallback, user questions and filing text go to Google's free tier.
+- **Defenses under routing:** `evals.attacks --route routed` (fast grader, strong answers) gave 2 successes out of 29 exposed attacks: the same two override cases as on the strong model, nothing new. 2 cases weren't exposed (the poisoned chunk didn't reach the sources): atk-31 and one table case. Not measured: fast-only, and attacks served by the Gemini fallback.
+- **Reproducibility limit:** the LLM cache key is the model plus the request, not the route. In an interleaved fresh run, routes that send the same request to the same model share one cache entry, so a cached rerun can't replay that run exactly. The eval-runner rerun matched accuracy, faithfulness and refusals on all 3 routes and recall on strong and fast; routed recall moved (R@5 0.797 to 0.823) and the rerun made 46 live free-tier calls. Fresh runs are the measurement of record.
+- **Default unchanged:** the strong route scored 0.985 vs 0.970 for the Phase 4 defended agent, with no question going from right to wrong, within run-to-run noise (up to 3 questions).

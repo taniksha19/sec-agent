@@ -2,7 +2,7 @@
 
 Usage: uv run python -m evals.run [--retrieval vector|hybrid] [--rerank nvidia|bge|minilm|none]
                                   [--backend qdrant|pinecone] [--limit N] [--save-baseline]
-                                  [--agent [--no-defense] [--route strong|fast|routed] [--fresh]]
+                                  [--agent [--no-defense] [--route ROUTE ...] [--fresh]]
 
 Recall@k: share of a question's gold sources found in the top-k retrieved chunks. A chunk finds a
 source if it is from the same company and contains the source's match strings (the figures from
@@ -255,58 +255,76 @@ def percentile(xs: list[float], p: float) -> float:
     return xs[min(len(xs) - 1, round(p * (len(xs) - 1)))]
 
 
-def full_run(rag, judge_llm, golden: list[dict], args, agent=None) -> dict:
-    """Golden set through the baseline RAG, or through the Phase 3 agent when given one.
-    For the agent, recall is over every chunk it gathered (all sub-questions and table
+def score_question(rag, judge_llm, q: dict, agent=None) -> dict:
+    """One golden question through the baseline RAG (agent=None) or an agent, judged."""
+    extra = {}
+    if agent:
+        ans, extra = agent_answer(agent, q["question"])
+        results = ans.sources
+    else:
+        results = rag.retrieve(q["question"], max(KS))
+        ans = rag.generate(q["question"], results[:TOP_K])
+    chunks = [r.chunk for r in results]
+
+    sources = q["sources"]
+    recall = {str(k): recall_at_k(sources, chunks, k) for k in KS} if sources else None
+    if q["type"] == "unanswerable":
+        correct, reason = is_refusal(ans.text), "refusal check"
+    else:
+        correct, reason = judge(judge_llm, q["question"], q["expected_answer"], ans.text)
+    faithful, faithful_reason = faithfulness(judge_llm, ans)
+    return {
+        "id": q["id"],
+        "type": q["type"],
+        "question": q["question"],
+        "expected": q["expected_answer"],
+        "answer": ans.text,
+        "correct": correct,
+        "judge_reason": reason,
+        "faithful": faithful,
+        "faithful_reason": faithful_reason,
+        "recall": recall,
+        "retrieved": [r.chunk.chunk_id for r in results],
+        "input_tokens": ans.input_tokens,
+        "output_tokens": ans.output_tokens,
+        **extra,
+    }
+
+
+def full_run(rag, judge_llm, golden: list[dict], args, agents: dict | None = None) -> list[dict]:
+    """Golden set through the baseline RAG, or through one agent per route when given agents.
+    With several routes, each question runs on every route before the next question, in an
+    order that flips every question: hosted-model speed drifts by the hour, so routes run back
+    to back would be timed under different conditions (docs/decisions.md).
+    For an agent, recall is over every chunk it gathered (all sub-questions and table
     lookups, in that order), so its R@k is not comparable with single-search R@k."""
-    rows = []
     start = time.monotonic()
-    name = ("agent" if agent.defend else "agent-nodefense") if agent else rag.retrieval
-    if agent:
-        name += f"-{args.route}" if args.route != "strong" else ""
+    setups = agents or {None: None}
+    rows = {route: [] for route in setups}
+    names = {}
+    for route, agent in setups.items():
+        name = ("agent" if agent.defend else "agent-nodefense") if agent else rag.retrieval
+        names[route] = name + (f"-{route}" if agent and route != "strong" else "")
+    order = list(setups)
     for i, q in enumerate(golden, 1):
-        extra = {}
-        if agent:
-            ans, extra = agent_answer(agent, q["question"])
-            results = ans.sources
-        else:
-            results = rag.retrieve(q["question"], max(KS))
-            ans = rag.generate(q["question"], results[:TOP_K])
-        chunks = [r.chunk for r in results]
+        for route in order if i % 2 else order[::-1]:
+            row = score_question(rag, judge_llm, q, setups[route])
+            rows[route].append(row)
+            recall = row["recall"]
+            print(
+                f"[{names[route]} {i}/{len(golden)}] {q['id']}: "
+                f"{'OK ' if row['correct'] else 'BAD'} recall@5={recall['5'] if recall else '-'}"
+            )
+    wall = round(time.monotonic() - start)
+    return [
+        finish_run(rag, args, names[route], route, rows[route], wall, interleaved=len(order) > 1)
+        for route in order
+    ]
 
-        sources = q["sources"]
-        recall = {str(k): recall_at_k(sources, chunks, k) for k in KS} if sources else None
-        if q["type"] == "unanswerable":
-            correct, reason = is_refusal(ans.text), "refusal check"
-        else:
-            correct, reason = judge(judge_llm, q["question"], q["expected_answer"], ans.text)
-        faithful, faithful_reason = faithfulness(judge_llm, ans)
 
-        rows.append(
-            {
-                "id": q["id"],
-                "type": q["type"],
-                "question": q["question"],
-                "expected": q["expected_answer"],
-                "answer": ans.text,
-                "correct": correct,
-                "judge_reason": reason,
-                "faithful": faithful,
-                "faithful_reason": faithful_reason,
-                "recall": recall,
-                "retrieved": [r.chunk.chunk_id for r in results],
-                "input_tokens": ans.input_tokens,
-                "output_tokens": ans.output_tokens,
-                **extra,
-            }
-        )
-        print(
-            f"[{name} {i}/{len(golden)}] {q['id']}: {'OK ' if correct else 'BAD'} "
-            f"recall@5={recall['5'] if recall else '-'}"
-        )
-
+def finish_run(rag, args, name, route, rows, wall, interleaved=False) -> dict:
     summary = summarize(rows)
-    if agent:
+    if route is not None:
         latencies = [r["latency_ms"] for r in rows]
         summary["agent"] = {
             "avg_llm_calls": round(sum(r["llm_calls"] for r in rows) / len(rows), 2),
@@ -315,8 +333,9 @@ def full_run(rag, judge_llm, golden: list[dict], args, agent=None) -> dict:
             "avg_rounds": round(sum(r["rounds"] for r in rows) / len(rows), 2),
             "latency_ms_p50": percentile(latencies, 0.5),
             "latency_ms_p95": percentile(latencies, 0.95),
-            "route": args.route,
+            "route": route,
             "fresh": args.fresh,
+            "interleaved": interleaved,
             "calls_by_model": dict(Counter(m for r in rows for m in r["models"])),
             # Questions with at least one call served by the fallback provider.
             "fell_back": sum(router.FALLBACK_MODEL in r["models"] for r in rows),
@@ -332,7 +351,7 @@ def full_run(rag, judge_llm, golden: list[dict], args, agent=None) -> dict:
             "top_k": TOP_K,
             "golden_file": GOLDEN.name,
             "run_at": datetime.now(UTC).isoformat(timespec="seconds"),
-            "wall_seconds": round(time.monotonic() - start),
+            "wall_seconds": wall,
         }
     )
     out = write_run("run", name, summary, rows)
@@ -375,8 +394,10 @@ def main() -> None:
     parser.add_argument(
         "--route",
         choices=sorted(router.POLICIES),
-        default="strong",
-        help="With --agent: which model serves each step (llm_gateway/router.py)",
+        nargs="+",
+        default=["strong"],
+        help="With --agent: which model serves each step (llm_gateway/router.py); several "
+        "routes run interleaved, question by question",
     )
     parser.add_argument(
         "--fresh",
@@ -429,13 +450,14 @@ def main() -> None:
             summaries.append(recall_only(rag, golden, args))
             continue
         rag.llm = CachedLLM(rag.llm, CACHE_DIR)
-        agent = None
+        agents = None
         if args.agent:
-            llms = router.from_env(
-                args.route, lambda llm: CachedLLM(llm, CACHE_DIR, not args.fresh)
-            )
-            agent = Agent(rag, llms, defend=not args.no_defense)
-        summaries.append(full_run(rag, judge_llm, golden, args, agent))
+            wrap = lambda llm: CachedLLM(llm, CACHE_DIR, not args.fresh)  # noqa: E731
+            agents = {
+                r: Agent(rag, router.from_env(r, wrap), defend=not args.no_defense)
+                for r in args.route
+            }
+        summaries.extend(full_run(rag, judge_llm, golden, args, agents))
 
     if args.save_baseline:
         BASELINE.write_text(json.dumps(summaries[0], indent=2) + "\n", encoding="utf-8")

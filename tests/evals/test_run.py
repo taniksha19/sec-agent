@@ -204,3 +204,56 @@ def test_format_table_one_row_per_setup_and_blank_when_unmeasured():
     assert len(lines) == 4
     assert lines[2] == "| vector | 0.100 | 0.500 | 0.600 |  |  |  |"
     assert lines[3] == "| hybrid+nvidia | 0.100 | 0.500 | 0.600 | 0.750 | 0.980 |  |"
+
+
+def test_cache_read_false_calls_again_but_still_writes(tmp_path):
+    inner = CountingLLM()
+    CachedLLM(inner, tmp_path).chat("sys", "q")
+    CachedLLM(inner, tmp_path, read=False).chat("sys", "q")
+    assert inner.calls == 2
+    CachedLLM(inner, tmp_path).chat("sys", "q")
+    assert inner.calls == 2  # the fresh reply was written and is read back
+
+
+def test_routes_alternate_per_question_with_order_flipping(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    import evals.run as run
+
+    seen = []
+
+    class FakeAgent:
+        defend = True
+
+        def __init__(self, route):
+            self.route = route
+
+        def run(self, question):
+            seen.append((question, self.route))
+            return {
+                "answer": NOT_FOUND,
+                "sources": [],
+                "cited": [],
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "subs": [],
+                "rounds_used": 1,
+                "tool_calls": [],
+                "llm_calls": 1,
+                "models": ["m"],
+                "latency_ms": 5,
+            }
+
+    monkeypatch.setattr(run, "RESULTS_DIR", tmp_path)
+    golden = [
+        {"id": f"u{i}", "type": "unanswerable", "question": f"q{i}", "expected_answer": NOT_FOUND,
+         "sources": []}
+        for i in range(3)
+    ]  # fmt: skip
+    rag = SimpleNamespace(retrieval="hybrid", candidates=50, reranker=None, llm=CountingLLM())
+    args = SimpleNamespace(fresh=True, collection="filings", tickers=None)
+    agents = {"strong": FakeAgent("strong"), "routed": FakeAgent("routed")}
+    summaries = run.full_run(rag, RecordingJudge("{}"), golden, args, agents)
+    assert [r for _, r in seen] == ["strong", "routed", "routed", "strong", "strong", "routed"]
+    assert [s["retrieval"] for s in summaries] == ["agent", "agent-routed"]
+    assert all(s["agent"]["interleaved"] and s["n"] == 3 for s in summaries)
